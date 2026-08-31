@@ -42,3 +42,6 @@ next-env.d.ts
 
 # raw SerpApi responses from scripts/test-queries.ts
 /data/serpapi-raw/
+
+# private planning doc
+hackathon-plan-v3.md
