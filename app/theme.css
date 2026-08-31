@@ -1,0 +1,148 @@
+/**
+ * Sparkline design tokens — Tailwind v4, CSS-first.
+ *
+ * Import this from your root layout (or app/globals.css).
+ * There is no tailwind.config.ts in v4; everything lives here.
+ *
+ * Rule of thumb: if a value isn't in this file, don't use it in a component.
+ */
+
+@import "tailwindcss";
+
+@theme {
+  /* ── typefaces ─────────────────────────────────────────────
+     Poppins for all UI. Source Serif 4 ONLY inside the document
+     viewer and for quoted excerpts — it's what makes evidence
+     read as a document rather than as chrome.                 */
+  --font-sans: "Poppins", system-ui, sans-serif;
+  --font-serif: "Source Serif 4", Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* ── surfaces ────────────────────────────────────────────── */
+  --color-canvas: #f4f5f6;   /* page background */
+  --color-surface: #ffffff;  /* cards, panels, active nav row */
+  --color-subtle: #fafbfb;   /* nav rail, table headers, footers */
+
+  /* ── borders ─────────────────────────────────────────────── */
+  --color-line: #e3e6e8;         /* standard 1px border */
+  --color-line-soft: #eef0f1;    /* internal dividers, table rows */
+  --color-line-strong: #cdd2d6;  /* dashed dropzones, muted marks */
+
+  /* ── text ────────────────────────────────────────────────── */
+  --color-ink: #171a1d;    /* primary text + primary button bg */
+  --color-ink-2: #4a5157;  /* body copy */
+  --color-ink-3: #868e95;  /* captions, labels, metadata */
+
+  /* ── semantic: verified / approved / agreed ──────────────── */
+  --color-accent: #1b5e4b;
+  --color-accent-soft: #e8f1ee;
+
+  /* ── semantic: stale / caution / degraded ────────────────── */
+  --color-warn: #8a6410;
+  --color-warn-soft: #fbf3e2;
+  --color-warn-line: #e8d5ab;
+
+  /* ── semantic: conflict / failure ────────────────────────── */
+  --color-alert: #8f3520;
+  --color-alert-soft: #f9eae6;
+  --color-alert-line: #eccfc6;
+
+  /* ── radius ──────────────────────────────────────────────
+     One radius. `sm` for inline chips, `full` for status dots
+     and count pills. Nothing else.                            */
+  --radius-sm: 3px;
+  --radius: 4px;
+  --radius-full: 9999px;
+
+  /* ── type scale ──────────────────────────────────────────
+     600 is the weight ceiling. Hierarchy comes from size and
+     colour, never from heavier weight.                        */
+  --text-display: 22px;
+  --text-display--line-height: 1.2;
+  --text-display--letter-spacing: -0.025em;
+
+  --text-title: 15.5px;
+  --text-title--line-height: 1.3;
+  --text-title--letter-spacing: -0.01em;
+
+  --text-value: 19px;
+  --text-value--line-height: 1.15;
+  --text-value--letter-spacing: -0.025em;
+
+  --text-body: 12.5px;
+  --text-body--line-height: 1.55;
+
+  --text-label: 11.5px;
+  --text-label--line-height: 1.4;
+
+  --text-caption: 11px;
+  --text-caption--line-height: 1.5;
+
+  --text-micro: 10px;
+  --text-micro--line-height: 1.4;
+  --text-micro--letter-spacing: 0.04em;
+
+  /* ── shadow ──────────────────────────────────────────────
+     `action` belongs to exactly ONE element per screen.
+     If two things have it, one of them is wrong.              */
+  --shadow-action: 0 5px 15px rgb(23 26 29 / 0.20);
+  --shadow-action-hover: 0 8px 20px rgb(23 26 29 / 0.25);
+  --shadow-selected: 0 0 0 1px #171a1d;
+  --shadow-card: 0 2px 10px rgb(23 26 29 / 0.05);
+  --shadow-paper: 0 2px 12px rgb(0 0 0 / 0.11);
+
+  /* ── fixed layout widths ─────────────────────────────────── */
+  --spacing-rail: 188px;   /* app nav */
+  --spacing-queue: 392px;  /* findings queue column */
+}
+
+/* ── base ──────────────────────────────────────────────────
+   The app fills the viewport and never scrolls as a page.
+   Columns scroll independently. This is load-bearing: page
+   scroll pushes the Approve button below the fold.           */
+@layer base {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* All figures are tabular. Values sit in columns constantly. */
+  .tabular,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Independent column scroll — pair with a min-h-0 parent. */
+  .scroll-col {
+    overflow-y: auto;
+    min-height: 0;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4d8db;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #bcc2c6;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
