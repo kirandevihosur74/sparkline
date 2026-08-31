@@ -5,8 +5,7 @@ Document trust pipeline: an agent extracts claims from documents using
 against live public data via **SerpApi** — flagging anything a human needs to
 sign off on, with a signed audit trail.
 
-Built for the DevNetwork API + Cloud + AI Hackathon 2026. Full build plan:
-[`hackathon-plan-v3.md`](./hackathon-plan-v3.md).
+Built for the DevNetwork API + Cloud + AI Hackathon 2026.
 
 ## The three beats
 
