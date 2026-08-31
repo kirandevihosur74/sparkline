@@ -14,8 +14,8 @@
      Poppins for all UI. Source Serif 4 ONLY inside the document
      viewer and for quoted excerpts — it's what makes evidence
      read as a document rather than as chrome.                 */
-  --font-sans: "Poppins", system-ui, sans-serif;
-  --font-serif: "Source Serif 4", Georgia, serif;
+  --font-sans: var(--font-poppins, "Poppins"), system-ui, sans-serif;
+  --font-serif: var(--font-source-serif, "Source Serif 4"), Georgia, serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 
   /* ── surfaces ────────────────────────────────────────────── */
