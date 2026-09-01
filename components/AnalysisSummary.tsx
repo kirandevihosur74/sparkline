@@ -10,15 +10,18 @@
  *   1. the collapsed rail — how the run went, and whether it finished;
  *   2. ErrorPanel, when a stage failed, standing IN PLACE of the results that
  *      stage never produced, so the failure is read before the score it bent;
- *   3. TrustScoreDial — the score FIRST, then the literal counts that produced
- *      it, then the coverage bar it composes beneath them;
+ *   3. TrustScorePanel — the score FIRST, then the literal counts that produced
+ *      it, then the coverage bar it composes beneath them. On a run that
+ *      recorded no score there is NO DIAL: the panel names the absence and the
+ *      two component bars carry what the run does know;
  *   4. the findings themselves.
  *
  * Score first, then the counts, then the findings. A number the reviewer has to
- * take on faith is exactly what this screen exists to avoid.
+ * take on faith is exactly what this screen exists to avoid — and a number the
+ * components beneath it do not add up to would be the same fault twice.
  *
  * Every component here already exists and is composed, never rebuilt:
- * PipelineRail (item 7), ErrorPanel (item 14), TrustScoreDial (which itself
+ * PipelineRail (item 7), ErrorPanel (item 14), TrustScorePanel (which itself
  * composes CoverageBar, item 13) and FindingCard (item 3).
  *
  * Shadow discipline: exactly one element carries `shadow-action` — "Open
@@ -39,7 +42,7 @@ import { useRouter } from "next/navigation";
 import ErrorPanel, { type StageFailure } from "./ErrorPanel";
 import FindingCard from "./FindingCard";
 import PipelineRail from "./PipelineRail";
-import TrustScoreDial from "./TrustScoreDial";
+import TrustScorePanel from "./TrustScoreDial";
 import type {
   CoverageBreakdown,
   ExtractedClaim,
@@ -59,7 +62,11 @@ export interface AnalysisSummaryProps {
   findings: Finding[];
   /** Derived from those same findings, so the counts cannot drift. */
   coverage: CoverageBreakdown;
-  /** The dial and the two components it is blended from. */
+  /**
+   * The two components, and the dial only when this run recorded a score —
+   * `TrustScoreBreakdown` is discriminated, so a run without one cannot
+   * accidentally render a dial.
+   */
   breakdown: TrustScoreBreakdown;
   /** Resolves the claim ids a failed stage stranded, for ErrorPanel. */
   claims: ExtractedClaim[];
@@ -156,7 +163,7 @@ export default function AnalysisSummary({
           ) : null}
 
           {/* ── 3 · the score, then the counts that produced it ─────────── */}
-          <TrustScoreDial breakdown={breakdown} coverage={coverage} />
+          <TrustScorePanel breakdown={breakdown} coverage={coverage} />
 
           {/* ── 4 · the findings ────────────────────────────────────────── */}
           <section aria-label="Findings" className="flex flex-col gap-3">
@@ -200,8 +207,12 @@ export default function AnalysisSummary({
       <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-line bg-subtle px-8 py-3.5">
         <div className="min-w-0">
           <p className="tabular text-label text-ink-2">
-            Trust score {breakdown.blendedRaw} of 100 · {coverage.open} of{" "}
-            {findingsLabel(coverage.total)} still open
+            {/* The footer repeats the panel's own reading — including its
+                absence. It never fills the gap with a number of its own. */}
+            {breakdown.unavailable === undefined
+              ? `Trust score ${breakdown.blendedRaw} of 100`
+              : breakdown.unavailable.headline}{" "}
+            · {coverage.open} of {findingsLabel(coverage.total)} still open
           </p>
           <p className="mt-0.5 text-caption text-ink-3">
             This build replays a recorded run — Nutrient DWS and SerpApi are not

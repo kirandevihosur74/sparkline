@@ -296,7 +296,12 @@ export interface ReviewSummary {
   flagCount: number;
   /** Live queries executed (funnel counter). */
   queryCount: number;
-  trustScore: TrustScoreT;
+  /**
+   * What this run recorded about its own trust. A run that could not finish
+   * its checks records the two component readings and NO blended number — see
+   * RunTrustScore.
+   */
+  trustScore: RunTrustScore;
 }
 
 /**
@@ -457,9 +462,11 @@ export interface TrustContextFact<
  * cross-document agreement reads HIGHER than on the completed run, because the
  * staleness that would have pulled it down was never discovered. A missing
  * external check makes the documents look more consistent than they are. That
- * has to be on screen — in ErrorPanel next to the failure, and beside the dial
- * — not buried in a code comment, because a reviewer reading the higher number
- * has no other way to know it is flattery.
+ * has to be on screen — in ErrorPanel next to the failure, and on the face of
+ * the bar itself — not buried in a code comment, because a reviewer reading the
+ * higher number has no other way to know it is flattery. It is also why that
+ * run has no score at all: the one reading the missing check would have moved
+ * is a reading this run cannot defend, so nothing is blended from it.
  *
  * `observedValue` and `comparisonValue` are supplied as numbers, not baked into
  * `detail`, so the copy and the bar can never disagree.
@@ -482,45 +489,90 @@ export interface TrustDistortionNote {
 }
 
 /**
+ * Why a run has no trust score, as renderable copy.
+ *
+ * A run whose external check never ran cannot be scored: any number would rest
+ * on the two components that DID run, and one of those two is exactly the
+ * reading the missing check would have moved. Rather than print a figure and
+ * then argue with it, the run records the absence — the system says what it
+ * does not know. Nothing is ever held down instead.
+ *
+ * Fixture-authored copy today; see TODO(schema-gap: TrustScore) below.
+ */
+export interface TrustScoreUnavailable {
+  /** Stands where the dial would be, e.g. "Trust score unavailable". */
+  headline: string;
+  /** One line: what did not run, and why that leaves nothing to score. */
+  reason: string;
+}
+
+/**
+ * The trust readings ONE RUN recorded.
+ *
+ * Both COMPONENT readings always exist — extraction and comparison ran, and
+ * their numbers are the two bars. `blended` does not always exist: a run that
+ * could not finish its checks produces no blended number at all, and
+ * `unavailable` is required in its place. A score is therefore either the
+ * backend's blend of the two components shown beside it, or it is absent and
+ * says why. It is never a number the components beside it do not add up to.
+ *
+ * TODO(schema-gap: TrustScore): the backend TrustScore (lib/types.ts:47-52)
+ * makes `blended` REQUIRED, so it cannot record a run that produced components
+ * but no score — such a run would have to carry an invented number.
+ * UnscoredTrustScore is the frontend-only half of this union until
+ * TrustScore.blended becomes nullable.
+ */
+export interface UnscoredTrustScore {
+  /** Never present on an unscored run. The absence IS the value. */
+  blended?: undefined;
+  extraction: number;
+  crossReference: number;
+  /** Required whenever there is no blended number. */
+  unavailable: TrustScoreUnavailable;
+}
+
+export type RunTrustScore = TrustScoreT | UnscoredTrustScore;
+
+/**
  * The trust dial, the two components it is made of, and the context that is
  * deliberately outside it.
  *
  * The dial NEVER renders without this breakdown beside it: a single blended
  * number with no visible parts is a number the reviewer has to take on faith.
+ * And a run with NO score renders no dial at all — `blended` is absent,
+ * `unavailable` is required in its place, and the two bars plus the counted
+ * context carry what the run does know. The absence is typed; it is never
+ * signalled by a magic number.
  *
- * TODO(schema-gap: TrustScore): this gap is now small. The backend TrustScore
- * (lib/types.ts:47-52) carries `blended`, `extraction` and `crossReference`,
- * and BOTH bars are exactly those fields — so the dial and its breakdown agree
- * arithmetically: on a run that completed, `blended` IS the backend's 40/60
- * blend of the two values shown, and nothing is displayed as a component that
- * does not move it. (On a run with a failed stage the dial is held deliberately
- * below that blend — a run that could not finish its checks does not score as
- * though it had — and `scoreDistortion` is the field that says so out loud.)
+ * TODO(schema-gap: TrustScore): what is left of this gap is ABSENCE. The
+ * backend TrustScore (lib/types.ts:47-52) carries `blended`, `extraction` and
+ * `crossReference`, and BOTH bars are exactly those fields — so on a run that
+ * completed, `blended` IS the backend's 40/60 blend of the two values shown,
+ * and nothing is displayed as a component that does not move it. What the
+ * backend cannot express is a run with no score: `blended` is a required number
+ * there, so a run that could not finish its checks would have to carry an
+ * invented one. That is why `blended`/`blendedRaw` are absent on
+ * UnscoredTrustBreakdown rather than suppressed — see the TODO on
+ * RunTrustScore above.
  *
- * What remains outside the contract is presentation-only:
+ * The rest of what is outside the contract is presentation-only:
  *
  *   - `context` — derived in fixtures.ts from findings (verdicts that came out
  *     of a live check) and AuditRecords (signed decisions). These are real
  *     counts the backend can already produce, but it stores no rollup of them,
  *     and — the point — it does not blend them into the score. They are
- *     reported as a sentence, NOT scored.
+ *     reported as a sentence, NOT scored, on a scored and an unscored run
+ *     alike.
  *   - `scoreDistortion` — fixture-authored copy, part of the same
  *     TODO(schema-gap: pipeline) as PipelineStage: the backend has no run
  *     entity, so nothing records that a stage failed or what its failure did
- *     to the score.
+ *     to the readings.
  *
- * No new TrustScore field is needed for the dial to be honest. If the backend
- * later decides live verification and sign-off SHOULD move the number, that is
- * a scoring decision plus two fields — not a correction of this shape.
+ * If the backend later decides live verification and sign-off SHOULD move the
+ * number, that is a scoring decision plus two fields — not a correction of this
+ * shape.
  */
-export interface TrustScoreBreakdown {
-  /**
-   * The dial value, normalized 0–1 (TrustScore.blended / 100 — the same
-   * number, in the domain every component already speaks).
-   */
-  blended: number;
-  /** The raw 0–100 blend as the backend stores it, for the audit line. */
-  blendedRaw: number;
+interface TrustScoreBreakdownBase {
   /** EXACTLY two, in this order — the tuple is the ordering contract. */
   components: readonly [
     TrustScoreComponent<"extraction_quality">,
@@ -528,7 +580,8 @@ export interface TrustScoreBreakdown {
   ];
   /**
    * The plain context line beneath the dial. EXACTLY two, in this order.
-   * Counts, not scores — nothing here moves `blended`.
+   * Counts, not scores — nothing here moves a blended number, and nothing here
+   * substitutes for one when it is missing.
    */
   context: readonly [
     TrustContextFact<"live_verification">,
@@ -540,3 +593,30 @@ export interface TrustScoreBreakdown {
    */
   scoreDistortion?: TrustDistortionNote;
 }
+
+/** A run that produced a score: the dial renders, and the bars blend to it. */
+export interface ScoredTrustBreakdown extends TrustScoreBreakdownBase {
+  /**
+   * The dial value, normalized 0–1 (TrustScore.blended / 100 — the same
+   * number, in the domain every component already speaks).
+   */
+  blended: number;
+  /** The raw 0–100 blend as the backend stores it, for the audit line. */
+  blendedRaw: number;
+  /** Never present when there is a score. */
+  unavailable?: undefined;
+}
+
+/**
+ * A run that produced NO score: there is no dial to render, and `unavailable`
+ * is the copy that stands in its place. The components and the context are
+ * still here — the run knows less, not nothing.
+ */
+export interface UnscoredTrustBreakdown extends TrustScoreBreakdownBase {
+  blended?: undefined;
+  blendedRaw?: undefined;
+  /** Required when there is no score. */
+  unavailable: TrustScoreUnavailable;
+}
+
+export type TrustScoreBreakdown = ScoredTrustBreakdown | UnscoredTrustBreakdown;

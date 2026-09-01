@@ -32,6 +32,8 @@ import type {
   PipelineStage,
   PipelineEvent,
   ClaimVerdict,
+  RunTrustScore,
+  UnscoredTrustScore,
   TrustScoreBreakdown,
   TrustScoreComponent,
   TrustContextFact,
@@ -697,9 +699,9 @@ const review: ReviewSummary = {
 //
 // The honesty rule this run exists to demonstrate: the three claims that were
 // routed to live verification and never checked come back "unverified", each
-// saying so in its own note. Nothing is silently corroborated, and the trust
-// score is penalised for the missing coverage rather than flattered by the
-// silence.
+// saying so in its own note. Nothing is silently corroborated, and no trust
+// score is reported at all — a run that could not finish its checks has no
+// evidence to score, so it says so instead of publishing a number.
 //
 // TODO(schema-gap: pipeline): same gap as the demo run — the backend has no
 // Run entity, so a failed run is a view-model here and nowhere else. It also
@@ -821,25 +823,30 @@ const degradedFindings: Finding[] = [
 ];
 
 /**
- * Trust score for the degraded run.
+ * Trust readings for the degraded run — the two components, and NO score.
  *
  * `extraction` is unchanged (88): the same 12 claims came out of the same DWS
  * call. `crossReference` is 71 rather than 62 — the contradiction still weighs
  * on it, but the CRITICAL staleness flag was never discovered, so it cannot be
- * priced in. That must NOT read as a better outcome, which is why `blended` is
- * 58 against the happy path's 72: the blend is penalised for the live-check
- * coverage this run does not have. A missing check is missing information, not
- * a clean bill of health.
+ * priced in.
  *
- * The consequence is that this run's dial does NOT equal the 40/60 blend of its
- * own two bars — it is held below them on purpose. That gap is the missing
- * check made visible, and degradedCrossDocumentDistortion below is the copy
- * that says so on screen.
+ * That second number is exactly why this run has no blended score. Blending it
+ * would score the run on a reading the missing check inflated; holding the
+ * blend down by hand would print a dial its own two bars do not add up to —
+ * the arithmetic visibly failing on the one screen that exists to show the
+ * arithmetic. So nothing is blended and nothing is held down. The run reports
+ * the two readings it has, says out loud that one of them reads too high
+ * (degradedCrossDocumentDistortion below), and records the absence of a score
+ * as an absence.
  */
-const degradedTrustScore: TrustScore = {
-  blended: 58,
+const degradedTrustScore: UnscoredTrustScore = {
   extraction: 88,
   crossReference: 71,
+  unavailable: {
+    headline: "Trust score unavailable",
+    reason:
+      "External verification didn't run, so there isn't enough evidence to score this document set.",
+  },
 };
 
 /**
@@ -851,8 +858,9 @@ const degradedTrustScore: TrustScore = {
  * the CRITICAL staleness flag was never discovered and so was never priced in.
  * Both numbers are read off the two runs' own TrustScore objects, so this note
  * cannot drift from the bars it describes. ErrorPanel renders it beside the
- * failure; the dial renders it beside the breakdown
- * (TrustScoreBreakdown.scoreDistortion).
+ * failure; the trust panel renders it on the face of the bar itself
+ * (TrustScoreBreakdown.scoreDistortion) — this run has no dial to hang it
+ * beside.
  */
 const degradedCrossDocumentDistortion: TrustDistortionNote = {
   componentId: "cross_document_agreement",
@@ -860,7 +868,7 @@ const degradedCrossDocumentDistortion: TrustDistortionNote = {
   headline:
     "Cross-document agreement is reading too high — the check that would have pulled it down never ran.",
   detail:
-    "Nothing outside these two documents contradicted them, so the comparison stage scored them as agreeing — but that is only true because the live check was refused. The staleness this run failed to discover is precisely what would have lowered this bar. A failed external check makes the documents look MORE consistent than they are, and it does it silently: the number moves the wrong way exactly when evidence goes missing. That is the argument for re-running the live check, not for trusting the higher figure. The dial is held below what these two bars blend to for the same reason: a run that could not finish its checks does not get to score as though it had.",
+    "Nothing outside these two documents contradicted them, so the comparison stage scored them as agreeing — but that is only true because the live check was refused. The staleness this run failed to discover is precisely what would have lowered this bar. A failed external check makes the documents look MORE consistent than they are, and it does it silently: the number moves the wrong way exactly when evidence goes missing. That is the argument for re-running the live check, not for trusting the higher figure. It is also why this run reports no trust score: a blend built on this bar would inherit exactly the flattery the bar is admitting to.",
   observedValue: normalizeConfidence(degradedTrustScore.crossReference),
   comparisonValue: normalizeConfidence(trustScore.crossReference),
   comparisonLabel: "the same bundle with the live check completed",
@@ -949,7 +957,7 @@ const degradedEvents: PipelineEvent[] = [
   {
     timestamp: "3:43",
     message:
-      "Run complete with a failed stage — 12 claims, 1 flag, 5 claims left unverified, trust score 58.",
+      "Run complete with a failed stage — 12 claims, 1 flag, 5 claims left unverified, no trust score: the live check never ran.",
   },
 ];
 
@@ -1072,12 +1080,17 @@ export function getAuditRecords(
   return resolveRun(reviewId)?.auditRecords ?? [];
 }
 
-/** The blended trust score (also available on getReview().trustScore). */
-export function getTrustScore(): TrustScore;
-export function getTrustScore(reviewId: string): TrustScore | undefined;
+/**
+ * The trust readings this run recorded (also on getReview().trustScore).
+ *
+ * May be an UnscoredTrustScore: a run that could not finish its checks records
+ * its two component readings and no blended number at all.
+ */
+export function getTrustScore(): RunTrustScore;
+export function getTrustScore(reviewId: string): RunTrustScore | undefined;
 export function getTrustScore(
   reviewId: string = DEMO_REVIEW_ID,
-): TrustScore | undefined {
+): RunTrustScore | undefined {
   return resolveRun(reviewId)?.review.trustScore;
 }
 
@@ -1145,13 +1158,17 @@ export function getDocumentAvgConfidence(
 // ---------------------------------------------------------------------------
 // Trust-score breakdown — DERIVED, never stored.
 //
-// TODO(schema-gap: TrustScore): now a small gap. BOTH bars below are backend
-// fields (TrustScore.extraction, TrustScore.crossReference) and `blended` is
-// the backend's 40/60 blend of exactly those two — the dial and its breakdown
-// agree arithmetically. Live verification and human sign-off are counted, not
-// scored: they come out of findings and audit records as `context`, a plain
-// sentence under the dial, because the backend does not blend them in. See the
-// full statement on TrustScoreBreakdown in lib/data/types.ts.
+// TODO(schema-gap: TrustScore): now a small gap, and what is left of it is
+// ABSENCE. BOTH bars below are backend fields (TrustScore.extraction,
+// TrustScore.crossReference); when the run recorded a blend, `blended` is the
+// backend's 40/60 blend of exactly those two, so the dial and its breakdown
+// agree arithmetically. When the run recorded NO blend, no dial is built — the
+// breakdown carries `unavailable` instead, and the same two bars and the same
+// counted context still render. Nothing here holds a number down. Live
+// verification and human sign-off are counted, not scored: they come out of
+// findings and audit records as `context`, a plain sentence, because the
+// backend does not blend them in. See the full statement on
+// TrustScoreBreakdown in lib/data/types.ts.
 // ---------------------------------------------------------------------------
 
 function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
@@ -1259,22 +1276,34 @@ function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
   const scoreDistortion = run.stages.find((s) => s.state === "failed")?.failure
     ?.scoreDistortion;
 
+  const parts = {
+    components: [extraction, crossDocument] as const,
+    context: [liveVerification, humanSignoff] as const,
+    ...(scoreDistortion ? { scoreDistortion } : {}),
+  };
+
+  // A run that recorded no blend gets no dial — the absence travels as the
+  // reason it happened, never as a low number standing in for one.
+  if (score.blended === undefined) {
+    return { ...parts, unavailable: score.unavailable };
+  }
+
   return {
+    ...parts,
     blended: normalizeConfidence(score.blended),
     blendedRaw: score.blended,
-    components: [extraction, crossDocument],
-    context: [liveVerification, humanSignoff],
-    ...(scoreDistortion ? { scoreDistortion } : {}),
   };
 }
 
 /**
- * The trust dial, the TWO backend components it is blended from, and the
- * context line beneath it — DERIVED on every call from the run's trust score,
- * findings, stages and audit records, never stored. The dial is never rendered
- * without this beside it.
+ * The trust dial WHEN THERE IS ONE, the TWO backend components it is blended
+ * from, and the context line beneath it — DERIVED on every call from the run's
+ * trust readings, findings, stages and audit records, never stored. The dial is
+ * never rendered without this beside it.
  *
- * Both bars are real backend fields, so the breakdown adds up to the dial.
+ * Both bars are real backend fields, so the breakdown adds up to the dial. On a
+ * run that recorded no blend the result is an UnscoredTrustBreakdown: same two
+ * bars, same counted context, and `unavailable` where the score would be.
  * `context` is counted and reported, never blended; `scoreDistortion` is
  * present only on a run whose failed stage flatters one of the bars. See
  * TODO(schema-gap: TrustScore) on TrustScoreBreakdown in lib/data/types.ts.

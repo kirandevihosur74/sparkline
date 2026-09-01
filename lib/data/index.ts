@@ -39,7 +39,10 @@ export type {
   // Derived
   CoverageBreakdown,
   // Trust-score breakdown — TWO backend-backed bars, plus the counted-not-
-  // scored context line beneath the dial (TODO(schema-gap: TrustScore))
+  // scored context line beneath the dial. A run that could not finish its
+  // checks records NO score: the absence is typed (UnscoredTrustScore /
+  // UnscoredTrustBreakdown), never a held-down number.
+  // (TODO(schema-gap: TrustScore))
   TrustComponentId,
   TrustComponentOrigin,
   TrustComponentCount,
@@ -47,6 +50,11 @@ export type {
   TrustContextFactId,
   TrustContextFact,
   TrustDistortionNote,
+  TrustScoreUnavailable,
+  UnscoredTrustScore,
+  RunTrustScore,
+  ScoredTrustBreakdown,
+  UnscoredTrustBreakdown,
   TrustScoreBreakdown,
 } from "./types";
 

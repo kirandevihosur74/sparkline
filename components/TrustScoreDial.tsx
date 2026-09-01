@@ -1,5 +1,14 @@
 /**
- * TrustScoreDial — the trust score for screen 3 (`/reviews/[id]`, complete).
+ * The trust panel for screen 3 (`/reviews/[id]`, complete) — and the dial
+ * inside it.
+ *
+ * TWO EXPORTS, AND THE SPLIT IS THE POINT. `TrustScorePanel` (default) takes
+ * the discriminated `TrustScoreBreakdown` and decides what stands at the head
+ * of the panel; `TrustScoreDial` takes a `ScoredTrustBreakdown` and therefore
+ * CANNOT be rendered without a score. There is no code path on which a dial
+ * shows a number its own bars do not support: a run that recorded no blend
+ * hands the panel `unavailable`, and the panel renders that copy in the dial's
+ * place.
  *
  * THE DIAL NEVER APPEARS ALONE. A single blended number with no visible parts
  * is a number the reviewer has to take on faith, so this component renders the
@@ -29,12 +38,14 @@
  * at the data-layer boundary). This file renders percentages and NEVER
  * re-normalizes.
  *
- * Degrading honestly: on the degraded run the score is low, one bar reads
+ * Degrading honestly: on the degraded run there is NO score — the external
+ * check never ran, so there is not enough evidence to blend one — one bar reads
  * HIGHER than it should because the check that would have pulled it down never
  * ran, and the context counts can be zero. All three are rendered as what they
- * are — a low band, `scoreDistortion` on the face of the bar it distorts, and
- * counted zeros with the outstanding work named — rather than as a blank or a
- * broken-looking panel.
+ * are: the absence named in plain type where the dial would be (never an empty
+ * arc, a zero, or an error state — ErrorPanel above already carries the
+ * failure), `scoreDistortion` on the face of the bar it distorts, and counted
+ * zeros with the outstanding work named.
  *
  * Server component — renders props, holds no state.
  */
@@ -44,10 +55,12 @@ import CoverageBar from "./CoverageBar";
 import { confidenceBand, type ConfidenceBand } from "./ConfidenceMeter";
 import type {
   CoverageBreakdown,
+  ScoredTrustBreakdown,
   TrustComponentCount,
   TrustDistortionNote,
   TrustScoreBreakdown,
   TrustScoreComponent,
+  TrustScoreUnavailable,
 } from "@/lib/data";
 
 /**
@@ -89,8 +102,11 @@ const STROKE = 10;
 const START_ANGLE = -135;
 const SWEEP = 270;
 
-export interface TrustScoreDialProps {
-  /** From `getTrustBreakdown()` — the dial value AND the parts it is made of. */
+export interface TrustScorePanelProps {
+  /**
+   * From `getTrustBreakdown()` — the parts the score is made of, and the score
+   * itself only when the run recorded one.
+   */
   breakdown: TrustScoreBreakdown;
   /**
    * From `getCoverage()`. Optional only so the panel can render before a run
@@ -102,74 +118,38 @@ export interface TrustScoreDialProps {
   label?: string;
 }
 
-export default function TrustScoreDial({
+export default function TrustScorePanel({
   breakdown,
   coverage,
   label = "Trust score",
-}: TrustScoreDialProps) {
-  const { blended, blendedRaw, components, context, scoreDistortion } = breakdown;
-
-  // The system says what it does not know. An unusable number is named, never
-  // drawn as an empty arc a reader would take for zero.
-  const scored = Number.isFinite(blended);
-  const band = TONE[confidenceBand(scored ? blended : 0)];
+}: TrustScorePanelProps) {
+  const { components, context, scoreDistortion } = breakdown;
 
   // Everything the context section reports that is still open.
   const outstanding = context
     .map((fact) => fact.outstanding)
     .filter((item): item is TrustComponentCount => item !== undefined);
   const nothingCounted = context.every((fact) => fact.value === 0);
+  const unavailable = breakdown.unavailable;
 
   return (
     <section
       aria-label={label}
       className="flex flex-col rounded border border-line bg-surface"
     >
-      {/* ── Dial and its components, SIDE BY SIDE ─────────────────────── */}
-      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-6 gap-y-5 px-5 py-5">
-        <div className="flex flex-col items-center gap-2.5">
-          <div className="relative size-28 shrink-0">
-            <Arc value={scored ? blended : 0} stroke={band.stroke} />
-            {/* Held inside the ring, not across it: at full width the longest
-                band word ("moderate trust") ran under the arc stroke and its
-                first letter disappeared into the same-coloured fill. The inset
-                is the stroke plus a hair, so the label wraps within the open
-                disc instead of colliding with the arc. */}
-            <div className="absolute inset-3 flex flex-col items-center justify-center gap-0.5 text-center">
-              {scored ? (
-                <>
-                  <span className="tabular text-display font-semibold text-ink">
-                    {formatPercent(blended)}
-                  </span>
-                  {/* Colour never carries meaning alone. */}
-                  <span
-                    className={`text-micro font-medium uppercase ${band.text}`}
-                  >
-                    {band.word} trust
-                  </span>
-                </>
-              ) : (
-                <span className="text-caption text-ink-3">not recorded</span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col items-center gap-0.5 text-center">
-            <h2 className="text-label font-medium text-ink">{label}</h2>
-            <p className="tabular text-caption text-ink-3">
-              {scored ? (
-                <>
-                  {blendedRaw} of 100 ·{" "}
-                  {scoreDistortion
-                    ? "held below what these components blend to"
-                    : "blended from the two components beside it"}
-                </>
-              ) : (
-                "No blended score was recorded for this run."
-              )}
-            </p>
-          </div>
-        </div>
+      {/* ── The score (or its absence) and the components it is made of ── */}
+      <div
+        className={
+          unavailable
+            ? "flex flex-col gap-5 px-5 py-5"
+            : "grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-6 gap-y-5 px-5 py-5"
+        }
+      >
+        {breakdown.unavailable === undefined ? (
+          <TrustScoreDial breakdown={breakdown} label={label} />
+        ) : (
+          <ScoreUnavailable notice={breakdown.unavailable} />
+        )}
 
         <div className="flex min-w-0 flex-col gap-5">
           {components.map((component) => (
@@ -219,13 +199,16 @@ export default function TrustScoreDial({
 
         {nothingCounted ? (
           <p className="text-caption text-ink-3">
-            Nothing here has been counted yet — the score above rests on its two
-            components alone.
+            {unavailable
+              ? "Nothing here has been counted yet — this run reached no live source and no reviewer."
+              : "Nothing here has been counted yet — the score above rests on its two components alone."}
           </p>
         ) : null}
 
         <p className="text-caption text-ink-3">
-          These are reported, not blended: neither figure moves the dial.
+          {unavailable
+            ? "These are reported, not blended: they are counts, and nothing here stands in for the missing score."
+            : "These are reported, not blended: neither figure moves the dial."}
         </p>
       </div>
 
@@ -240,6 +223,76 @@ export default function TrustScoreDial({
         </div>
       ) : null}
     </section>
+  );
+}
+
+export interface TrustScoreDialProps {
+  /**
+   * A run that RECORDED A SCORE. The type is the guarantee: `blended` and
+   * `blendedRaw` are required on ScoredTrustBreakdown, so this component has no
+   * "no score" branch to get wrong and no number to invent.
+   */
+  breakdown: ScoredTrustBreakdown;
+  /** Heads the dial; the panel passes its own label straight through. */
+  label?: string;
+}
+
+/**
+ * The dial: the arc, the percentage, the band word, and the one line that says
+ * where the number came from. Only ever rendered for a run that has one.
+ */
+export function TrustScoreDial({
+  breakdown,
+  label = "Trust score",
+}: TrustScoreDialProps) {
+  const { blended, blendedRaw } = breakdown;
+  const band = TONE[confidenceBand(blended)];
+
+  return (
+    <div className="flex flex-col items-center gap-2.5">
+      <div className="relative size-28 shrink-0">
+        <Arc value={blended} stroke={band.stroke} />
+        {/* Held inside the ring, not across it: at full width the longest
+            band word ("moderate trust") ran under the arc stroke and its
+            first letter disappeared into the same-coloured fill. The inset
+            is the stroke plus a hair, so the label wraps within the open
+            disc instead of colliding with the arc. */}
+        <div className="absolute inset-3 flex flex-col items-center justify-center gap-0.5 text-center">
+          <span className="tabular text-display font-semibold text-ink">
+            {formatPercent(blended)}
+          </span>
+          {/* Colour never carries meaning alone. */}
+          <span className={`text-micro font-medium uppercase ${band.text}`}>
+            {band.word} trust
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-col items-center gap-0.5 text-center">
+        <h2 className="text-label font-medium text-ink">{label}</h2>
+        <p className="tabular text-caption text-ink-3">
+          {blendedRaw} of 100 · blended from the two components beside it
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What stands where the dial would be on a run that produced no score.
+ *
+ * Typographic and quiet on purpose: this is an honest absence, not a failure.
+ * The failure itself is ErrorPanel's, directly above on the same screen, and
+ * repeating it in alert tone here would say the number is broken rather than
+ * that there is no number to show. Both strings come off the breakdown — the
+ * component authors no copy about what a run does or does not know.
+ */
+function ScoreUnavailable({ notice }: { notice: TrustScoreUnavailable }) {
+  return (
+    <div className="flex max-w-xl flex-col gap-1.5">
+      <h2 className="text-title font-medium text-ink">{notice.headline}</h2>
+      <p className="text-body text-ink-2">{notice.reason}</p>
+    </div>
   );
 }
 
