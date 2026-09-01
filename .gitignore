@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,6 +40,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Nutrient Web SDK static assets — vendored by scripts/copy-viewer-assets.mjs
+# on postinstall (149MB; ViewerEmbed serves them from public/)
+/public/nutrient-viewer-lib/
 
 # raw SerpApi responses from scripts/test-queries.ts
 /data/serpapi-raw/
