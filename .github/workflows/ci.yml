@@ -27,44 +27,11 @@ jobs:
       - name: Build
         run: npm run build
 
-  # API-dependent tests — spend real credits/quota, so they run only on main
-  # pushes and manual dispatch, never on PRs (fork PRs have no secrets).
-  # One full run ≈ 3 SerpApi searches (free tier: 100/month) + ~16 DWS credits.
-  # Requires repo secrets: NUTRIENT_API_KEY, SERPAPI_API_KEY.
-  api-tests:
-    needs: checks
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    env:
-      NUTRIENT_API_KEY: ${{ secrets.NUTRIENT_API_KEY }}
-      SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Verify secrets are configured
-        run: |
-          if [ -z "$NUTRIENT_API_KEY" ] || [ -z "$SERPAPI_API_KEY" ]; then
-            echo "::error::NUTRIENT_API_KEY and SERPAPI_API_KEY repo secrets are required for api-tests"
-            exit 1
-          fi
-      - name: Smoke tests (auth check before spending credits)
-        run: |
-          npm run smoke:nutrient
-          npm run smoke:serpapi
-      - name: Integration — extraction recovers planted claims
-        run: npm run test:extraction
-      - name: Integration — full pipeline claim states
-        run: npm run test:pipeline
-      - name: Build for e2e server
-        run: npm run build
-      - name: E2E — HTTP suite against production server
-        run: npm run test:e2e
-
+# API-dependent tests (smoke, extraction, pipeline, e2e) run locally only —
+# they spend real credits/quota (~3 SerpApi searches + ~16 DWS credits per
+# run): npm run smoke:nutrient / smoke:serpapi / test:extraction /
+# test:pipeline / test:e2e.
+#
 # CD: Vercel deploys via its Git integration once the repo is connected
 # (vercel.com/new → import repo) — no workflow needed here. If a
 # workflow-driven deploy is preferred later, add a `deploy` job using
