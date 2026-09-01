@@ -14,6 +14,7 @@
     "queries:verify": "tsx scripts/test-queries.ts verify",
     "docs:build": "tsx scripts/build-docs.ts",
     "test:extraction": "tsx scripts/test-extraction.ts",
+    "test:unit": "node --import tsx --test tests/unit.test.ts",
     "test:pipeline": "tsx scripts/test-pipeline.ts",
     "test:e2e": "tsx scripts/test-e2e.ts"
   },
