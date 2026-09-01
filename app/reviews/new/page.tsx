@@ -30,15 +30,17 @@ export default function NewReviewPage() {
   const review = getReview(DEMO_REVIEW_ID);
   const stages = getStages(DEMO_REVIEW_ID);
 
-  // Where "Run analysis" goes: the review workspace for the run.
+  // Where "Run analysis" goes: the analysis screen, in its ANALYZING state.
   //
-  // It pointed at `/reviews/${review.id}` — the analysis screen (DESIGN_SYSTEM
-  // screens 2 and 3) — but that route does not exist in this build, so the
-  // screen's one primary action served a 404. The review workspace is the only
-  // route the committed run actually has, and it reads correctly for a run the
-  // fixtures already report as complete. Re-point this at `/reviews/[id]` the
-  // day that segment ships.
-  const runHref = review ? `/reviews/${review.id}/review` : undefined;
+  // This pointed at `/reviews/${review.id}/review` while the analysis screen
+  // was a stub — the review workspace was the only route the committed run
+  // had. That screen has landed (DESIGN_SYSTEM screens 2 and 3), so the action
+  // now runs the analysis it names instead of skipping past it. `?state=
+  // analyzing` is the explicit signal that starts the replay; a plain visit to
+  // the same route shows the completed run, which is what the fixtures hold.
+  const runHref = review
+    ? `/reviews/${review.id}?state=analyzing`
+    : undefined;
 
   return (
     <NewReviewComposer

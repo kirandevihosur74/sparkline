@@ -38,12 +38,15 @@ export type {
   PipelineEvent,
   // Derived
   CoverageBreakdown,
-  // Trust-score breakdown (two of four bars frontend-derived —
-  // TODO(schema-gap: TrustScore))
+  // Trust-score breakdown — TWO backend-backed bars, plus the counted-not-
+  // scored context line beneath the dial (TODO(schema-gap: TrustScore))
   TrustComponentId,
   TrustComponentOrigin,
   TrustComponentCount,
   TrustScoreComponent,
+  TrustContextFactId,
+  TrustContextFact,
+  TrustDistortionNote,
   TrustScoreBreakdown,
 } from "./types";
 

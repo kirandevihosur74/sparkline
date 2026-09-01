@@ -1,21 +1,99 @@
 /**
- * /reviews/[id] — the analysis screen: screens 2 (analyzing) and 3 (complete)
- * of the design system, one route in two states.
+ * /reviews/[id] — the analysis screen: DESIGN_SYSTEM.md screens 2 (analyzing)
+ * and 3 (complete), ONE route in two states.
  *
- * Stub. Not built yet, and deliberately not faked: the funnel counters,
- * pipeline rail and reasoning stream all have real fixture data behind them
- * (getStages / getEvents / getTrustBreakdown), so this screen will render live
- * data rather than a mock when it lands. Until then a click from the nav
- * arrives here instead of at a 404.
+ * Server component. Every value on both states is read here, once, from
+ * lib/data and handed down as props — there are no GET endpoints and nothing
+ * below this line fetches anything.
+ *
+ * WHICH STATE YOU GET, AND WHY. A plain visit shows the COMPLETE run, because
+ * that is what the data layer actually holds: `getStages()` describes a run
+ * that already finished. The analyzing state is a REPLAY of that same recorded
+ * run, so it is entered deliberately — with `?state=analyzing` on the URL —
+ * and the complete state carries a visible "Replay analysis" control that puts
+ * it back. `/reviews/new` sends its "Run analysis" action here with that
+ * parameter set, so the demo walks new review → run → results in one line.
+ *
+ * Next 16: `params` AND `searchParams` are both promises and must be awaited
+ * before they can be read (node_modules/next/dist/docs/01-app/03-api-reference/
+ * 03-file-conventions/page.md). Reading `searchParams` opts this page into
+ * dynamic rendering at request time, which is correct — the state on screen
+ * depends on the URL the reviewer arrived with.
+ *
+ * This route also serves DEGRADED_REVIEW_ID, the run whose live check was
+ * refused. Nothing here special-cases it: the failed stage travels on the run's
+ * own `PipelineStage.failure`, and AnalysisSummary renders ErrorPanel wherever
+ * it finds one. A degraded run therefore cannot be displayed as a clean one.
  */
 
-import StubScreen from "@/components/StubScreen";
+import AnalysisScreen, { type AnalysisPhase } from "@/components/AnalysisScreen";
+import {
+  DEMO_REVIEW_ID,
+  getClaims,
+  getCoverage,
+  getEvents,
+  getFindings,
+  getReview,
+  getStages,
+  getTrustBreakdown,
+} from "@/lib/data";
 
-export default function ReviewAnalysisPage() {
+/** `/reviews/[id]?state=analyzing` — the explicit signal that starts the run. */
+const STATE_PARAM = "state";
+const ANALYZING = "analyzing";
+
+/** One search param, whichever way the URL spelled it. */
+function readParam(
+  value: string | string[] | undefined,
+): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function AnalysisPage({
+  params,
+  searchParams,
+}: PageProps<"/reviews/[id]">) {
+  const [{ id }, query] = await Promise.all([params, searchParams]);
+
+  // The accessors default to DEMO_REVIEW_ID; an id the data layer does not
+  // know falls back to the same semantics the review screen uses rather than
+  // 404-ing the demo.
+  const review = getReview(id) ?? getReview(DEMO_REVIEW_ID);
+  const reviewId = review?.id ?? DEMO_REVIEW_ID;
+  const breakdown = getTrustBreakdown(reviewId);
+
+  if (!review || !breakdown) {
+    // Failures name the consequence before the cause.
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center p-8">
+        <p className="text-body text-ink-3">
+          There is nothing to show about this run: no review with this id exists
+          in the data layer, and neither does the demo run.
+        </p>
+      </div>
+    );
+  }
+
+  const initialPhase: AnalysisPhase =
+    readParam(query[STATE_PARAM]) === ANALYZING ? ANALYZING : "complete";
+
   return (
-    <StubScreen
-      title="Analysis"
-      detail="Designed to show the run itself — funnel counters per stage, the pipeline rail with its provider names and timings, and the reasoning stream — then collapse to a summary line with the trust score and findings once the run completes."
+    <AnalysisScreen
+      reviewTitle={review.title}
+      reviewSubtitle={review.subtitle}
+      claimCount={review.claimCount}
+      stages={getStages(reviewId)}
+      events={getEvents(reviewId)}
+      findings={getFindings(reviewId)}
+      // Derived from those same findings on every call, so the counts on the
+      // summary cannot drift from the cards beneath them.
+      coverage={getCoverage(reviewId)}
+      breakdown={breakdown}
+      // Resolves the claim ids a failed stage stranded — ErrorPanel names the
+      // claims rather than printing bare ids.
+      claims={getClaims(undefined, reviewId)}
+      reviewHref={`/reviews/${reviewId}/review`}
+      initialPhase={initialPhase}
     />
   );
 }

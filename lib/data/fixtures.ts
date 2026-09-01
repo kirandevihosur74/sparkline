@@ -34,6 +34,8 @@ import type {
   ClaimVerdict,
   TrustScoreBreakdown,
   TrustScoreComponent,
+  TrustContextFact,
+  TrustDistortionNote,
 } from "./types";
 import { normalizeConfidence } from "./types";
 
@@ -828,11 +830,40 @@ const degradedFindings: Finding[] = [
  * 58 against the happy path's 72: the blend is penalised for the live-check
  * coverage this run does not have. A missing check is missing information, not
  * a clean bill of health.
+ *
+ * The consequence is that this run's dial does NOT equal the 40/60 blend of its
+ * own two bars — it is held below them on purpose. That gap is the missing
+ * check made visible, and degradedCrossDocumentDistortion below is the copy
+ * that says so on screen.
  */
 const degradedTrustScore: TrustScore = {
   blended: 58,
   extraction: 88,
   crossReference: 71,
+};
+
+/**
+ * The sharpest thing this run has to say about itself, as renderable copy
+ * rather than a code comment: the failed live check does not merely leave the
+ * score incomplete, it FLATTERS one of its two bars.
+ *
+ * `crossReference` is 71 here against 62 on the completed run — higher, because
+ * the CRITICAL staleness flag was never discovered and so was never priced in.
+ * Both numbers are read off the two runs' own TrustScore objects, so this note
+ * cannot drift from the bars it describes. ErrorPanel renders it beside the
+ * failure; the dial renders it beside the breakdown
+ * (TrustScoreBreakdown.scoreDistortion).
+ */
+const degradedCrossDocumentDistortion: TrustDistortionNote = {
+  componentId: "cross_document_agreement",
+  direction: "up",
+  headline:
+    "Cross-document agreement is reading too high — the check that would have pulled it down never ran.",
+  detail:
+    "Nothing outside these two documents contradicted them, so the comparison stage scored them as agreeing — but that is only true because the live check was refused. The staleness this run failed to discover is precisely what would have lowered this bar. A failed external check makes the documents look MORE consistent than they are, and it does it silently: the number moves the wrong way exactly when evidence goes missing. That is the argument for re-running the live check, not for trusting the higher figure. The dial is held below what these two bars blend to for the same reason: a run that could not finish its checks does not get to score as though it had.",
+  observedValue: normalizeConfidence(degradedTrustScore.crossReference),
+  comparisonValue: normalizeConfidence(trustScore.crossReference),
+  comparisonLabel: "the same bundle with the live check completed",
 };
 
 const degradedStages: PipelineStage[] = [
@@ -867,6 +898,7 @@ const degradedStages: PipelineStage[] = [
       code: "HTTP 429",
       retryAfterSec: 60,
       affectedClaimIds: UNCHECKED_CLAIM_IDS,
+      scoreDistortion: degradedCrossDocumentDistortion,
     },
   },
 ];
@@ -1113,25 +1145,14 @@ export function getDocumentAvgConfidence(
 // ---------------------------------------------------------------------------
 // Trust-score breakdown — DERIVED, never stored.
 //
-// TODO(schema-gap: TrustScore): only two of these four bars exist in the
-// backend. See the full statement of the gap on TrustScoreBreakdown in
-// lib/data/types.ts — `external_verification` and `humanSignoff` have NO
-// backend field at all and are computed below from findings, stages and audit
-// records; `blended` is the backend's 40/60 blend of the OTHER TWO, so the
-// derived bars are visible but do not move the dial.
+// TODO(schema-gap: TrustScore): now a small gap. BOTH bars below are backend
+// fields (TrustScore.extraction, TrustScore.crossReference) and `blended` is
+// the backend's 40/60 blend of exactly those two — the dial and its breakdown
+// agree arithmetically. Live verification and human sign-off are counted, not
+// scored: they come out of findings and audit records as `context`, a plain
+// sentence under the dial, because the backend does not blend them in. See the
+// full statement on TrustScoreBreakdown in lib/data/types.ts.
 // ---------------------------------------------------------------------------
-
-/** The confidence a finding carries, wherever its union member keeps it. */
-function findingConfidence(finding: Finding): number {
-  switch (finding.verdict) {
-    case "conflicting":
-      return finding.flag.confidence;
-    case "stale":
-      return finding.flag.confidence;
-    default:
-      return finding.claim.confidence;
-  }
-}
 
 function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
   const score = run.review.trustScore;
@@ -1170,41 +1191,42 @@ function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
     origin: "backend",
   };
 
-  // 3 — External verification. FRONTEND-DERIVED: no backend field exists.
-  // Coverage of the claims routed to a live source (settled ÷ routed), scaled
-  // by the mean confidence of what actually came back. Claims the live-check
-  // stage names as unchecked count as routed-and-unsettled, so a refused query
-  // pulls this bar to zero instead of leaving it silently absent.
-  const liveSettled = run.findings.filter(
+  // --- Context. Counted, NOT scored: nothing below moves `blended`. ---------
+  // These are the same literal counts the old external-verification and
+  // human-sign-off bars carried. The synthetic 0–1 values are gone, because
+  // the backend never blended them and a bar that cannot move the dial reads
+  // like arithmetic that does not add up.
+
+  // Claims a live source actually settled, either way — a stale verdict is a
+  // checked claim, not a failed one.
+  const liveChecked = run.findings.filter(
     (f) => f.verdict === "stale" || f.verdict === "corroborated",
   );
+  // Claims routed to a live source that the failed stage names as unreached.
   const unchecked =
     run.stages.find((s) => s.id === "live_check")?.failure?.affectedClaimIds ??
     [];
-  const routed = liveSettled.length + unchecked.length;
-  const liveConfidence =
-    liveSettled.length === 0
-      ? 0
-      : liveSettled.reduce((sum, f) => sum + findingConfidence(f), 0) /
-        liveSettled.length;
-  const externalVerification: TrustScoreComponent<"external_verification"> = {
-    id: "external_verification",
-    label: "External verification",
-    value: routed === 0 ? 0 : (liveSettled.length / routed) * liveConfidence,
-    caption:
-      unchecked.length > 0
-        ? "SerpApi did not answer, so the claims routed to a live source are still open. This bar reads coverage, not doubt."
-        : "Share of the claims routed to a live source that came back settled, scaled by the confidence of what SerpApi returned.",
-    counts: [
-      { value: run.queryTraces.length, unit: "live queries completed" },
-      { value: liveSettled.length, unit: "claims settled live" },
-      { value: unchecked.length, unit: "claims left unchecked" },
-    ],
-    origin: "frontend-derived",
+  const liveVerification: TrustContextFact<"live_verification"> = {
+    id: "live_verification",
+    value: liveChecked.length,
+    label:
+      liveChecked.length === 1
+        ? "claim checked against a live source"
+        : "claims checked against live sources",
+    outstanding:
+      unchecked.length === 0
+        ? undefined
+        : {
+            value: unchecked.length,
+            unit:
+              unchecked.length === 1
+                ? "claim routed to a live source and left unchecked"
+                : "claims routed to a live source and left unchecked",
+          },
+    provider: "SerpApi",
   };
 
-  // 4 — Human sign-off. FRONTEND-DERIVED: no backend field exists.
-  // Signed decisions ÷ the findings only a human can close.
+  // Signed decisions against the findings only a human can close.
   const needsSignoff = run.findings.filter(
     (f) =>
       f.verdict === "conflicting" ||
@@ -1214,41 +1236,47 @@ function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
   const signed = run.auditRecords.filter((record) =>
     needsSignoff.some((f) => f.id === record.flagId),
   );
-  const humanSignoff: TrustScoreComponent<"human_signoff"> = {
+  const stillOpen = needsSignoff.length - signed.length;
+  const humanSignoff: TrustContextFact<"human_signoff"> = {
     id: "human_signoff",
-    label: "Human sign-off",
-    value:
-      needsSignoff.length === 0 ? 0 : signed.length / needsSignoff.length,
-    caption:
-      needsSignoff.length === 0
-        ? "No finding in this run needs a human decision, so nothing has been signed."
-        : "Decisions signed by a reviewer (Nutrient DWS) against the findings only a human can close.",
-    counts: [
-      { value: signed.length, unit: "decisions signed" },
-      { value: needsSignoff.length, unit: "findings need one" },
-      { value: needsSignoff.length - signed.length, unit: "still unsigned" },
-    ],
-    origin: "frontend-derived",
+    value: signed.length,
+    label: signed.length === 1 ? "finding signed off" : "findings signed off",
+    outstanding:
+      stillOpen <= 0
+        ? undefined
+        : {
+            value: stillOpen,
+            unit:
+              stillOpen === 1
+                ? "finding still waiting on a reviewer"
+                : "findings still waiting on a reviewer",
+          },
+    provider: "Nutrient DWS",
   };
+
+  // A failed stage's own account of how it distorts the score, read off the
+  // stage rather than restated here, so the dial and ErrorPanel cannot differ.
+  const scoreDistortion = run.stages.find((s) => s.state === "failed")?.failure
+    ?.scoreDistortion;
 
   return {
     blended: normalizeConfidence(score.blended),
     blendedRaw: score.blended,
-    components: [
-      extraction,
-      crossDocument,
-      externalVerification,
-      humanSignoff,
-    ],
+    components: [extraction, crossDocument],
+    context: [liveVerification, humanSignoff],
+    ...(scoreDistortion ? { scoreDistortion } : {}),
   };
 }
 
 /**
- * The trust dial plus the four components that make it auditable — DERIVED on
- * every call from the run's findings, stages, query traces and audit records,
- * never stored. The dial is never rendered without this beside it.
+ * The trust dial, the TWO backend components it is blended from, and the
+ * context line beneath it — DERIVED on every call from the run's trust score,
+ * findings, stages and audit records, never stored. The dial is never rendered
+ * without this beside it.
  *
- * Two of the four bars are frontend-derived: see
+ * Both bars are real backend fields, so the breakdown adds up to the dial.
+ * `context` is counted and reported, never blended; `scoreDistortion` is
+ * present only on a run whose failed stage flatters one of the bars. See
  * TODO(schema-gap: TrustScore) on TrustScoreBreakdown in lib/data/types.ts.
  */
 export function getTrustBreakdown(): TrustScoreBreakdown;
