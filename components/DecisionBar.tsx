@@ -28,6 +28,7 @@
 
 import { useState } from "react";
 import type { AuditRecord, Finding, RejectReason } from "@/lib/data";
+import { formatUtc } from "@/lib/format";
 
 /**
  * Who signs. DESIGN_SYSTEM.md: "Nutrient DWS" attributes extraction AND
@@ -94,26 +95,10 @@ export interface DecisionBarProps {
   onNext?: (findingId: string) => void;
 }
 
-/**
- * Deterministic UTC rendering — a client component formatting in the viewer's
- * locale would disagree with the server pass and hydrate wrong. UTC is also
- * what the audit ledger shows, so the two never read differently.
- */
-const SIGNED_AT = new Intl.DateTimeFormat("en-GB", {
-  day: "2-digit",
-  month: "short",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-  timeZone: "UTC",
-});
-
+// Deterministic UTC rendering lives in lib/format.ts — Intl disagrees between
+// Node's ICU and the browser's even with a pinned locale, breaking hydration.
 function formatSignedAt(iso: string | undefined): string | undefined {
-  if (!iso) return undefined;
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return undefined;
-  return `${SIGNED_AT.format(at)} UTC`;
+  return iso ? formatUtc(iso) : undefined;
 }
 
 export default function DecisionBar({

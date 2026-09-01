@@ -27,6 +27,7 @@
 
 import { useEffect, useState } from "react";
 import type { QueryTrace, TraceResult } from "@/lib/data";
+import { formatUtc } from "@/lib/format";
 
 /**
  * Provider attribution sits next to the output it belongs to, so no legend is
@@ -49,26 +50,9 @@ const DECISION: Record<
   rejected: { label: "Rejected", text: "text-ink-3", dot: "bg-line-strong" },
 };
 
-/**
- * Deterministic UTC rendering — a client component formatting in the viewer's
- * locale would disagree with the server pass and hydrate wrong. UTC is also
- * what the audit ledger and DecisionBar show, so no two times read differently.
- */
-const SEARCHED_AT = new Intl.DateTimeFormat("en-GB", {
-  day: "2-digit",
-  month: "short",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-  timeZone: "UTC",
-});
-
-function formatSearchedAt(iso: string): string | undefined {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return undefined;
-  return `${SEARCHED_AT.format(at)} UTC`;
-}
+// Deterministic UTC rendering lives in lib/format.ts — Intl disagrees between
+// Node's ICU and the browser's even with a pinned locale, breaking hydration.
+const formatSearchedAt = formatUtc;
 
 type CopyState = "idle" | "copied" | "failed";
 
