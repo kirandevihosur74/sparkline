@@ -82,6 +82,15 @@
   --text-micro--line-height: 1.4;
   --text-micro--letter-spacing: 0.04em;
 
+  /* ── font weight ─────────────────────────────────────────
+     600 is the ceiling, enforced not just documented: clearing
+     the namespace removes font-bold/font-extrabold entirely.
+     Poppins is only loaded at 400/500/600 (app/layout.tsx).   */
+  --font-weight-*: initial;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+
   /* ── shadow ──────────────────────────────────────────────
      `action` belongs to exactly ONE element per screen.
      If two things have it, one of them is wrong.              */

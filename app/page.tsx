@@ -13,7 +13,7 @@ export default function Home() {
     <main className="mx-auto max-w-5xl space-y-10 p-8">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Sparkline</h1>
+          <h1 className="text-2xl font-semibold">Sparkline</h1>
           <p className="text-sm text-zinc-500">
             Extracts claims from documents, catches contradictions, checks them
             against live public data — and routes anything ambiguous to a human,
