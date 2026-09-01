@@ -12,7 +12,8 @@
     "queries:discover": "tsx scripts/test-queries.ts discover",
     "queries:verify": "tsx scripts/test-queries.ts verify",
     "docs:build": "tsx scripts/build-docs.ts",
-    "test:extraction": "tsx scripts/test-extraction.ts"
+    "test:extraction": "tsx scripts/test-extraction.ts",
+    "test:pipeline": "tsx scripts/test-pipeline.ts"
   },
   "dependencies": {
     "@nutrient-sdk/dws-client-typescript": "^3.0.0",

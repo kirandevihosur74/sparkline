@@ -16,7 +16,7 @@ async function main() {
   const client = getNutrientClient();
   for (const doc of DOCS) {
     const result = await client.convert(doc.src, "pdf");
-    const buffer = Buffer.from(result.buffer as ArrayBuffer);
+    const buffer = Buffer.from(result.buffer);
     writeFileSync(doc.out, buffer);
     console.log(`✅ ${doc.src} → ${doc.out} (${(buffer.length / 1024).toFixed(1)} KB)`);
   }
