@@ -32,6 +32,8 @@ import type {
   PipelineStage,
   PipelineEvent,
   ClaimVerdict,
+  TrustScoreBreakdown,
+  TrustScoreComponent,
 } from "./types";
 import { normalizeConfidence } from "./types";
 
@@ -54,7 +56,7 @@ const documents: DocumentMeta[] = [
     author: "Halcyon Infrastructure Partners",
     docType: "investment-memo",
     datedAt: "2026-03-20",
-    pageCount: 3,
+    pageCount: 2,
     fileName: "doc-a-investment-memo.pdf",
     sizeBytes: 622628,
     uploadedAt: "2026-08-31T04:43:51.000Z",
@@ -66,7 +68,7 @@ const documents: DocumentMeta[] = [
     author: "Ardenfell Engineering Advisors",
     docType: "engineering-report",
     datedAt: "2026-02-10",
-    pageCount: 3,
+    pageCount: 2,
     fileName: "doc-b-engineering-report.pdf",
     sizeBytes: 542416,
     uploadedAt: "2026-08-31T04:43:58.000Z",
@@ -298,8 +300,15 @@ const queryTraces: QueryTrace[] = [
 
 // ---------------------------------------------------------------------------
 // Findings — one entry per verification outcome, in queue order (flags first,
-// by materiality). 12 claims → 2 conflicting, 1 stale, 1 corroborated,
-// 5 consistent, 1 review-required, 2 unverified (demo-claims.md routing).
+// by materiality). getCoverage() counts THESE, not claims: a finding is an
+// outcome, and one cross-document contradiction consumes two claims to produce
+// one of them.
+//
+// So the demo-claims.md routing, which is stated per CLAIM — 12 claims →
+// 2 conflicting, 1 stale, 1 corroborated, 5 consistent, 1 review-required,
+// 2 unverified — lands here as 11 FINDINGS: 1 conflicting (claims a1 + b1
+// collapse into the single expansion-cost contradiction), 1 stale,
+// 1 corroborated, 5 consistent, 1 review-required, 2 unverified.
 // ---------------------------------------------------------------------------
 
 const contradictionFinding: ContradictionFinding = {
@@ -677,67 +686,391 @@ const review: ReviewSummary = {
 };
 
 // ---------------------------------------------------------------------------
-// Typed accessor API — the ONLY surface components consume.
+// DEGRADED RUN — insurance, NOT the demo path.
+//
+// A second, complete fixture run in which extraction and comparison succeed
+// and the live check is refused by SerpApi (HTTP 429). It exists so that a
+// rate limit during live judging has a screen to land on instead of a blank
+// one; DEMO_REVIEW_ID stays byte-identical and remains the happy path.
+//
+// The honesty rule this run exists to demonstrate: the three claims that were
+// routed to live verification and never checked come back "unverified", each
+// saying so in its own note. Nothing is silently corroborated, and the trust
+// score is penalised for the missing coverage rather than flattered by the
+// silence.
+//
+// TODO(schema-gap: pipeline): same gap as the demo run — the backend has no
+// Run entity, so a failed run is a view-model here and nowhere else. It also
+// has no notion of "routed to live verification": UNCHECKED_CLAIM_IDS below is
+// the only record that these three claims were ever queued for a live source.
 // ---------------------------------------------------------------------------
 
-/** The one demo review, or undefined for any other id. */
-export function getReview(id: string): ReviewSummary | undefined {
-  return id === DEMO_REVIEW_ID ? review : undefined;
+export const DEGRADED_REVIEW_ID = "demo-2026-08-degraded";
+
+/**
+ * The three claims routed to the counterparty external check — all three turn
+ * on Freedom Forever LLC, so one refused query strands all of them. Real ids
+ * from the claim set above: counterparty standing, counterparty scale, and the
+ * installer-backed workmanship warranty that depends on both.
+ */
+const UNCHECKED_CLAIM_IDS: string[] = [
+  claims.a4.id,
+  claims.a5.id,
+  claims.a6.id,
+];
+
+/** Same contradiction, unsigned: nothing in this run reached a human. */
+const degradedContradictionFlag: ContradictionFlag = {
+  ...contradictionFlag,
+  status: "open",
+};
+
+const degradedFlags: Flag[] = [degradedContradictionFlag];
+
+/** No live query returned, so this run has no trace to show. */
+const degradedQueryTraces: QueryTrace[] = [];
+
+/** No decision was signed in this run — the audit ledger is empty, not hidden. */
+const degradedAuditRecords: AuditRecord[] = [];
+
+const degradedContradictionFinding: ContradictionFinding = {
+  ...contradictionFinding,
+  status: "open",
+  flag: degradedContradictionFlag,
+};
+
+/**
+ * The three stranded claims. Each is "unverified" — the verdict that means "no
+ * verification strategy completed" — and each note names the consequence
+ * (unconfirmed) before the cause (the refused query).
+ */
+const degradedUncheckedFindings: ClaimFinding[] = [
+  {
+    id: "finding-counterparty-standing-unchecked",
+    verdict: "unverified",
+    label: "Counterparty standing",
+    materiality: "critical",
+    status: "open",
+    claim: claims.a4,
+    source: {
+      documentId: "doc-a",
+      page: 2,
+      excerpt:
+        "Installation and expansion works are performed under a master installation agreement with Freedom Forever LLC, executed January 2026, which remains in good standing.",
+    },
+    summary:
+      "This is the highest-materiality claim in the bundle and the one this run could not settle. It has no counterpart in the second document, so only a live source can confirm or refute it, and no live source was reached.",
+    note: "Unconfirmed — routed to live verification, and SerpApi refused the query (HTTP 429) before any result came back. The document still says “in good standing”; this run has no evidence either way.",
+  },
+  {
+    id: "finding-warranty-unchecked",
+    verdict: "unverified",
+    label: "Workmanship warranty",
+    materiality: "high",
+    status: "open",
+    claim: claims.a6,
+    source: {
+      documentId: "doc-a",
+      page: 2,
+      excerpt:
+        "The installer-backed 25-year workmanship warranty covers the installed base, which we view as a meaningful mitigant to long-term operations and maintenance risk.",
+    },
+    summary:
+      "The warranty is only worth what the installer behind it is worth, so it cannot be assessed while counterparty standing is unchecked.",
+    note: "Unconfirmed — the warranty depends on the counterparty check above, which never ran (SerpApi HTTP 429). Not routed to a human either: there is nothing yet for a reviewer to decide on.",
+  },
+  {
+    id: "finding-counterparty-scale-unchecked",
+    verdict: "unverified",
+    label: "Counterparty scale",
+    materiality: "medium",
+    status: "open",
+    claim: claims.a5,
+    source: {
+      documentId: "doc-a",
+      page: 2,
+      excerpt:
+        "Freedom Forever is one of the largest residential solar installers in the United States, providing national coverage and established installation crews.",
+    },
+    note: "Unconfirmed — the same refused query (SerpApi HTTP 429) would have carried this phrase. It is reported unverified, not corroborated.",
+  },
+];
+
+/**
+ * Findings carried over intact from the happy path: every claim the failure did
+ * not touch keeps the verdict that extraction and comparison produced. Status is
+ * forced open because no decision was signed in this run.
+ */
+const degradedCarriedFindings: ClaimFinding[] = claimFindings
+  .filter((finding) => !UNCHECKED_CLAIM_IDS.includes(finding.claim.id))
+  .map((finding) => ({ ...finding, status: "open" as const }));
+
+/**
+ * 11 findings again — 12 claims, with a1 + b1 collapsing into the one
+ * contradiction — but the live-check outcomes are gone: 1 conflicting,
+ * 5 consistent, 5 unverified. Queue order is materiality first.
+ */
+const degradedFindings: Finding[] = [
+  degradedUncheckedFindings[0],
+  degradedContradictionFinding,
+  degradedUncheckedFindings[1],
+  degradedUncheckedFindings[2],
+  ...degradedCarriedFindings,
+];
+
+/**
+ * Trust score for the degraded run.
+ *
+ * `extraction` is unchanged (88): the same 12 claims came out of the same DWS
+ * call. `crossReference` is 71 rather than 62 — the contradiction still weighs
+ * on it, but the CRITICAL staleness flag was never discovered, so it cannot be
+ * priced in. That must NOT read as a better outcome, which is why `blended` is
+ * 58 against the happy path's 72: the blend is penalised for the live-check
+ * coverage this run does not have. A missing check is missing information, not
+ * a clean bill of health.
+ */
+const degradedTrustScore: TrustScore = {
+  blended: 58,
+  extraction: 88,
+  crossReference: 71,
+};
+
+const degradedStages: PipelineStage[] = [
+  {
+    id: "extract",
+    label: "Extract",
+    provider: "Nutrient DWS",
+    state: "done",
+    durationMs: 219_460,
+    metric: { value: 12, unit: "claims" },
+  },
+  {
+    id: "compare",
+    label: "Compare",
+    provider: "Sparkline",
+    state: "done",
+    durationMs: 2_080,
+    metric: { value: 1, unit: "flag" },
+  },
+  {
+    id: "live_check",
+    label: "Live check",
+    provider: "SerpApi",
+    state: "failed",
+    durationMs: 812,
+    metric: { value: 0, unit: "queries" },
+    failure: {
+      headline:
+        "3 claims are unverified — SerpApi refused the live query on a rate limit.",
+      detail:
+        "SerpApi returned HTTP 429 with Retry-After: 60 before any result came back, so the counterparty external check never executed. Extraction and cross-document comparison had already finished and their results stand. The three claims that only a live source could settle are reported unverified rather than assumed correct — re-running the live check is the only thing that resolves them.",
+      code: "HTTP 429",
+      retryAfterSec: 60,
+      affectedClaimIds: UNCHECKED_CLAIM_IDS,
+    },
+  },
+];
+
+const degradedEvents: PipelineEvent[] = [
+  {
+    timestamp: "0:00",
+    message: "Run started — 2 documents queued for extraction.",
+  },
+  {
+    timestamp: "1:51",
+    message:
+      "7 claims extracted from Project Ardenfell IC Memo — mean extraction confidence 92%.",
+  },
+  {
+    timestamp: "3:39",
+    message:
+      "5 claims extracted from the Independent Engineering Report — mean extraction confidence 81%. 12 claims total.",
+  },
+  {
+    timestamp: "3:41",
+    message:
+      "Expansion installation cost: $186M (memo p.1) against $211M (IE report p.2) — Δ $25M, 13.4%, materiality high.",
+    verdict: "conflicting",
+  },
+  {
+    timestamp: "3:41",
+    message:
+      "Portfolio capacity (250 MW) and commercial operation target (Q4 2027) agree across both documents.",
+    verdict: "consistent",
+  },
+  {
+    timestamp: "3:42",
+    message:
+      "Counterparty standing, counterparty scale and the workmanship warranty have no counterpart in the second document — routing 3 claims to live check.",
+  },
+  {
+    timestamp: "3:42",
+    message:
+      "SerpApi: HTTP 429 on the first query — rate limit reached, Retry-After 60s. No results received.",
+  },
+  {
+    timestamp: "3:42",
+    message:
+      "Live check abandoned after the refusal. The 3 routed claims are recorded unverified — an unchecked claim is not a corroborated one.",
+    verdict: "unverified",
+  },
+  {
+    timestamp: "3:43",
+    message:
+      "Run complete with a failed stage — 12 claims, 1 flag, 5 claims left unverified, trust score 58.",
+  },
+];
+
+const degradedReview: ReviewSummary = {
+  id: DEGRADED_REVIEW_ID,
+  title: "Wrenfield Residential Solar Portfolio",
+  subtitle:
+    "250 MW distributed solar · expansion tranche diligence · 3 claims unverified, live check did not complete",
+  createdAt: "2026-08-31T05:31:10.000Z",
+  status: "complete",
+  documents,
+  claimCount: allClaims.length,
+  flagCount: degradedFlags.length,
+  queryCount: degradedQueryTraces.length,
+  trustScore: degradedTrustScore,
+};
+
+// ---------------------------------------------------------------------------
+// Run registry — every accessor resolves through this. DEMO_REVIEW_ID is the
+// default, so a call with no review id behaves exactly as it did before the
+// degraded run existed.
+// ---------------------------------------------------------------------------
+
+interface FixtureRun {
+  review: ReviewSummary;
+  claims: ExtractedClaim[];
+  flags: Flag[];
+  findings: Finding[];
+  queryTraces: QueryTrace[];
+  auditRecords: AuditRecord[];
+  stages: PipelineStage[];
+  events: PipelineEvent[];
+}
+
+const runs: Record<string, FixtureRun> = {
+  [DEMO_REVIEW_ID]: {
+    review,
+    claims: allClaims,
+    flags,
+    findings,
+    queryTraces,
+    auditRecords,
+    stages,
+    events,
+  },
+  [DEGRADED_REVIEW_ID]: {
+    review: degradedReview,
+    claims: allClaims,
+    flags: degradedFlags,
+    findings: degradedFindings,
+    queryTraces: degradedQueryTraces,
+    auditRecords: degradedAuditRecords,
+    stages: degradedStages,
+    events: degradedEvents,
+  },
+};
+
+/** undefined for an unknown id — an unknown review is not the demo review. */
+function resolveRun(reviewId: string): FixtureRun | undefined {
+  return runs[reviewId];
+}
+
+// ---------------------------------------------------------------------------
+// Typed accessor API — the ONLY surface components consume.
+//
+// Every run-scoped accessor takes an OPTIONAL review id defaulting to
+// DEMO_REVIEW_ID, so existing no-argument callers are unaffected. An id with no
+// fixture run returns empty/undefined rather than falling back to the demo run:
+// silently serving one review's data under another review's id is the exact
+// failure this layer exists to prevent.
+// ---------------------------------------------------------------------------
+
+/** One review by id (demo or degraded), or undefined for any other id. */
+export function getReview(id: string = DEMO_REVIEW_ID): ReviewSummary | undefined {
+  return resolveRun(id)?.review;
 }
 
 /** Both source documents, in upload-slot order (memo first). */
-export function getDocuments(): DocumentMeta[] {
-  return documents;
+export function getDocuments(reviewId: string = DEMO_REVIEW_ID): DocumentMeta[] {
+  return resolveRun(reviewId)?.review.documents ?? [];
 }
 
 /** All 12 extracted claims; optionally filtered to one document. */
-export function getClaims(documentId?: string): ExtractedClaim[] {
+export function getClaims(
+  documentId?: string,
+  reviewId: string = DEMO_REVIEW_ID,
+): ExtractedClaim[] {
+  const runClaims = resolveRun(reviewId)?.claims ?? [];
   return documentId
-    ? allClaims.filter((c) => c.documentId === documentId)
-    : allClaims;
+    ? runClaims.filter((c) => c.documentId === documentId)
+    : runClaims;
 }
 
 /** Domain flags only (contradiction + staleness), for flag-shaped consumers. */
-export function getFlags(): Flag[] {
-  return flags;
+export function getFlags(reviewId: string = DEMO_REVIEW_ID): Flag[] {
+  return resolveRun(reviewId)?.flags ?? [];
 }
 
 /** Every verification outcome in queue order: flags first, by materiality. */
-export function getFindings(): Finding[] {
-  return findings;
+export function getFindings(reviewId: string = DEMO_REVIEW_ID): Finding[] {
+  return resolveRun(reviewId)?.findings ?? [];
 }
 
-/** Live-verification trace for a flag — fixture-only (schema gap). */
-export function getQueryTrace(flagId: string): QueryTrace | undefined {
-  return queryTraces.find((t) => t.flagId === flagId);
+/**
+ * Live-verification trace for a flag — fixture-only (schema gap). Undefined
+ * when the run never completed a query, which is the degraded run's whole
+ * point: there is no trace to show, and the UI must say so.
+ */
+export function getQueryTrace(
+  flagId: string,
+  reviewId: string = DEMO_REVIEW_ID,
+): QueryTrace | undefined {
+  return resolveRun(reviewId)?.queryTraces.find((t) => t.flagId === flagId);
 }
 
 /** Signed decisions for the audit ledger, oldest first. */
-export function getAuditRecords(): AuditRecord[] {
-  return auditRecords;
+export function getAuditRecords(
+  reviewId: string = DEMO_REVIEW_ID,
+): AuditRecord[] {
+  return resolveRun(reviewId)?.auditRecords ?? [];
 }
 
 /** The blended trust score (also available on getReview().trustScore). */
-export function getTrustScore(): TrustScore {
-  return trustScore;
+export function getTrustScore(): TrustScore;
+export function getTrustScore(reviewId: string): TrustScore | undefined;
+export function getTrustScore(
+  reviewId: string = DEMO_REVIEW_ID,
+): TrustScore | undefined {
+  return resolveRun(reviewId)?.review.trustScore;
 }
 
 /** Analysis-funnel stages, in run order. Fixture-only (schema gap). */
-export function getStages(): PipelineStage[] {
-  return stages;
+export function getStages(reviewId: string = DEMO_REVIEW_ID): PipelineStage[] {
+  return resolveRun(reviewId)?.stages ?? [];
 }
 
 /** Reasoning-stream events, oldest first. Fixture-only (schema gap). */
-export function getEvents(): PipelineEvent[] {
-  return events;
+export function getEvents(reviewId: string = DEMO_REVIEW_ID): PipelineEvent[] {
+  return resolveRun(reviewId)?.events ?? [];
 }
 
 /**
  * Coverage of the review, DERIVED from getFindings() on every call — never
  * stored, so it cannot drift from the findings it counts. Keyed to our
  * ClaimVerdict/FlagStatus semantics, not the mockup's categories.
+ *
+ * These are counts of FINDINGS, not of claims: the demo bundle's 12 claims
+ * produce 11 findings because the two conflicting cost claims are one
+ * contradiction. Label them "findings" wherever they are rendered.
  */
-export function getCoverage(): CoverageBreakdown {
+export function getCoverage(
+  reviewId: string = DEMO_REVIEW_ID,
+): CoverageBreakdown {
   const byVerdict: Record<ClaimVerdict, number> = {
     conflicting: 0,
     stale: 0,
@@ -750,7 +1083,7 @@ export function getCoverage(): CoverageBreakdown {
   let approved = 0;
   let rejected = 0;
 
-  const all = getFindings();
+  const all = getFindings(reviewId);
   for (const finding of all) {
     byVerdict[finding.verdict] += 1;
     if (finding.status === "approved") approved += 1;
@@ -767,10 +1100,164 @@ export function getCoverage(): CoverageBreakdown {
  * stored copy would drift the moment a claim changed. null when the document
  * has no claims (unknown, not zero).
  */
-export function getDocumentAvgConfidence(documentId: string): number | null {
-  const docClaims = getClaims(documentId);
+export function getDocumentAvgConfidence(
+  documentId: string,
+  reviewId: string = DEMO_REVIEW_ID,
+): number | null {
+  const docClaims = getClaims(documentId, reviewId);
   if (docClaims.length === 0) return null;
   const total = docClaims.reduce((sum, claim) => sum + claim.confidence, 0);
   return total / docClaims.length;
 }
 
+// ---------------------------------------------------------------------------
+// Trust-score breakdown — DERIVED, never stored.
+//
+// TODO(schema-gap: TrustScore): only two of these four bars exist in the
+// backend. See the full statement of the gap on TrustScoreBreakdown in
+// lib/data/types.ts — `external_verification` and `humanSignoff` have NO
+// backend field at all and are computed below from findings, stages and audit
+// records; `blended` is the backend's 40/60 blend of the OTHER TWO, so the
+// derived bars are visible but do not move the dial.
+// ---------------------------------------------------------------------------
+
+/** The confidence a finding carries, wherever its union member keeps it. */
+function findingConfidence(finding: Finding): number {
+  switch (finding.verdict) {
+    case "conflicting":
+      return finding.flag.confidence;
+    case "stale":
+      return finding.flag.confidence;
+    default:
+      return finding.claim.confidence;
+  }
+}
+
+function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
+  const score = run.review.trustScore;
+
+  // 1 — Extraction quality. Backend field: TrustScore.extraction.
+  const extraction: TrustScoreComponent<"extraction_quality"> = {
+    id: "extraction_quality",
+    label: "Extraction quality",
+    value: normalizeConfidence(score.extraction),
+    caption:
+      "Mean Nutrient DWS field confidence across every claim pulled out of the bundle.",
+    counts: [
+      { value: run.review.claimCount, unit: "claims extracted" },
+      { value: run.review.documents.length, unit: "documents read" },
+    ],
+    origin: "backend",
+  };
+
+  // 2 — Cross-document agreement. Backend field: TrustScore.crossReference.
+  const crossChecked = run.findings.filter(
+    (f) => f.verdict === "conflicting" || f.verdict === "consistent",
+  );
+  const disagreements = run.findings.filter(
+    (f) => f.verdict === "conflicting",
+  ).length;
+  const crossDocument: TrustScoreComponent<"cross_document_agreement"> = {
+    id: "cross_document_agreement",
+    label: "Cross-document agreement",
+    value: normalizeConfidence(score.crossReference),
+    caption:
+      "How far the documents agree on the claims the comparison stage could pair up, weighted down by each unresolved disagreement.",
+    counts: [
+      { value: crossChecked.length, unit: "agreement checks" },
+      { value: disagreements, unit: "disagreements found" },
+    ],
+    origin: "backend",
+  };
+
+  // 3 — External verification. FRONTEND-DERIVED: no backend field exists.
+  // Coverage of the claims routed to a live source (settled ÷ routed), scaled
+  // by the mean confidence of what actually came back. Claims the live-check
+  // stage names as unchecked count as routed-and-unsettled, so a refused query
+  // pulls this bar to zero instead of leaving it silently absent.
+  const liveSettled = run.findings.filter(
+    (f) => f.verdict === "stale" || f.verdict === "corroborated",
+  );
+  const unchecked =
+    run.stages.find((s) => s.id === "live_check")?.failure?.affectedClaimIds ??
+    [];
+  const routed = liveSettled.length + unchecked.length;
+  const liveConfidence =
+    liveSettled.length === 0
+      ? 0
+      : liveSettled.reduce((sum, f) => sum + findingConfidence(f), 0) /
+        liveSettled.length;
+  const externalVerification: TrustScoreComponent<"external_verification"> = {
+    id: "external_verification",
+    label: "External verification",
+    value: routed === 0 ? 0 : (liveSettled.length / routed) * liveConfidence,
+    caption:
+      unchecked.length > 0
+        ? "SerpApi did not answer, so the claims routed to a live source are still open. This bar reads coverage, not doubt."
+        : "Share of the claims routed to a live source that came back settled, scaled by the confidence of what SerpApi returned.",
+    counts: [
+      { value: run.queryTraces.length, unit: "live queries completed" },
+      { value: liveSettled.length, unit: "claims settled live" },
+      { value: unchecked.length, unit: "claims left unchecked" },
+    ],
+    origin: "frontend-derived",
+  };
+
+  // 4 — Human sign-off. FRONTEND-DERIVED: no backend field exists.
+  // Signed decisions ÷ the findings only a human can close.
+  const needsSignoff = run.findings.filter(
+    (f) =>
+      f.verdict === "conflicting" ||
+      f.verdict === "stale" ||
+      f.verdict === "review_required",
+  );
+  const signed = run.auditRecords.filter((record) =>
+    needsSignoff.some((f) => f.id === record.flagId),
+  );
+  const humanSignoff: TrustScoreComponent<"human_signoff"> = {
+    id: "human_signoff",
+    label: "Human sign-off",
+    value:
+      needsSignoff.length === 0 ? 0 : signed.length / needsSignoff.length,
+    caption:
+      needsSignoff.length === 0
+        ? "No finding in this run needs a human decision, so nothing has been signed."
+        : "Decisions signed by a reviewer (Nutrient DWS) against the findings only a human can close.",
+    counts: [
+      { value: signed.length, unit: "decisions signed" },
+      { value: needsSignoff.length, unit: "findings need one" },
+      { value: needsSignoff.length - signed.length, unit: "still unsigned" },
+    ],
+    origin: "frontend-derived",
+  };
+
+  return {
+    blended: normalizeConfidence(score.blended),
+    blendedRaw: score.blended,
+    components: [
+      extraction,
+      crossDocument,
+      externalVerification,
+      humanSignoff,
+    ],
+  };
+}
+
+/**
+ * The trust dial plus the four components that make it auditable — DERIVED on
+ * every call from the run's findings, stages, query traces and audit records,
+ * never stored. The dial is never rendered without this beside it.
+ *
+ * Two of the four bars are frontend-derived: see
+ * TODO(schema-gap: TrustScore) on TrustScoreBreakdown in lib/data/types.ts.
+ */
+export function getTrustBreakdown(): TrustScoreBreakdown;
+export function getTrustBreakdown(
+  reviewId: string,
+): TrustScoreBreakdown | undefined;
+export function getTrustBreakdown(
+  reviewId: string = DEMO_REVIEW_ID,
+): TrustScoreBreakdown | undefined {
+  const run = resolveRun(reviewId);
+  return run ? buildTrustBreakdown(run) : undefined;
+}

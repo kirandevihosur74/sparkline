@@ -38,12 +38,20 @@ export type {
   PipelineEvent,
   // Derived
   CoverageBreakdown,
+  // Trust-score breakdown (two of four bars frontend-derived —
+  // TODO(schema-gap: TrustScore))
+  TrustComponentId,
+  TrustComponentOrigin,
+  TrustComponentCount,
+  TrustScoreComponent,
+  TrustScoreBreakdown,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
 
 export {
   DEMO_REVIEW_ID,
+  DEGRADED_REVIEW_ID,
   getReview,
   getDocuments,
   getClaims,
@@ -52,6 +60,7 @@ export {
   getQueryTrace,
   getAuditRecords,
   getTrustScore,
+  getTrustBreakdown,
   getStages,
   getEvents,
   getCoverage,

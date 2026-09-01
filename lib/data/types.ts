@@ -336,16 +336,108 @@ export type RejectReason =
  * Never stored and never persisted: any stored copy would drift from the
  * findings it counts.
  *
+ * EVERY NUMBER HERE IS A COUNT OF FINDINGS, NOT OF CLAIMS. A finding is one
+ * verification outcome, and a cross-document contradiction consumes two
+ * claims to produce one finding — so the 12-claim demo bundle yields 11
+ * findings. Label these numbers "findings" in the UI; calling them claims
+ * misstates the total by exactly the number of contradictions.
+ *
  * Keyed to our shipped verdict semantics (ClaimVerdict + FlagStatus), not to
  * the mockup's flat corroborated/openConflict/openStale categories.
  */
 export interface CoverageBreakdown {
-  /** Total findings — one per verification outcome. */
+  /** Total FINDINGS — one per verification outcome, not one per claim. */
   total: number;
-  /** Count per ClaimVerdict. Every key is present, zero when unused. */
+  /** Findings per ClaimVerdict. Every key is present, zero when unused. */
   byVerdict: Record<ClaimVerdict, number>;
   /** FlagStatus rollup across the same findings. Sums to `total`. */
   open: number;
   approved: number;
   rejected: number;
+}
+
+/**
+ * One auditable count behind a trust-score component, e.g.
+ * `{ value: 12, unit: "claims extracted" }`. Rendered beside the caption so
+ * the bar's number can be checked without asking where it came from.
+ */
+export interface TrustComponentCount {
+  value: number;
+  /** Plural noun for `value`, already agreeing with it in the fixture. */
+  unit: string;
+}
+
+/** The four trust components, in the fixed order they are rendered. */
+export type TrustComponentId =
+  | "extraction_quality"
+  | "cross_document_agreement"
+  | "external_verification"
+  | "human_signoff";
+
+/** Where a component's number comes from — see TODO(schema-gap: TrustScore). */
+export type TrustComponentOrigin = "backend" | "frontend-derived";
+
+/** One bar of the trust-score breakdown. */
+export interface TrustScoreComponent<
+  Id extends TrustComponentId = TrustComponentId,
+> {
+  id: Id;
+  /** Display label, e.g. "Extraction quality". */
+  label: string;
+  /** Already normalized 0–1. Render as a percentage; never re-normalize. */
+  value: number;
+  /** One short sentence: what produced this number. */
+  caption: string;
+  /** The literal counts the value is computed from, in reading order. */
+  counts: TrustComponentCount[];
+  /**
+   * "backend" — read straight off TrustScore. "frontend-derived" — computed
+   * here from findings/records because the backend has no field for it. The
+   * UI must be able to mark the derived bars; see the TODO below.
+   */
+  origin: TrustComponentOrigin;
+}
+
+/**
+ * The trust dial and the four components that make it auditable.
+ *
+ * The dial NEVER renders without this breakdown beside it: a single blended
+ * number with no visible parts is a number the reviewer has to take on faith.
+ *
+ * TODO(schema-gap: TrustScore): the backend TrustScore (lib/types.ts:47-52)
+ * carries ONLY `blended`, `extraction` and `crossReference`. TWO OF THE FOUR
+ * BARS HAVE NO BACKEND FIELD WHATSOEVER:
+ *
+ *   - `external_verification` — frontend-derived in fixtures.ts from the
+ *     findings whose verdict came out of a live check (stale / corroborated)
+ *     against the claims the live-check stage names as unchecked
+ *     (PipelineStage.failure.affectedClaimIds), weighted by those findings'
+ *     own confidence. Nothing about live-verification coverage is persisted.
+ *   - `human_signoff` — frontend-derived in fixtures.ts from AuditRecords
+ *     (signed decisions) over the findings that require a human decision
+ *     (conflicting / stale / review_required). The backend stores each
+ *     ReviewRecord but computes no completion ratio.
+ *
+ * Consequence: `blended` is NOT the average of the four bars — it is the
+ * backend's 40/60 blend of the first two only, so the last two are shown but
+ * do not move the dial. Before this is real the backend must either grow
+ * `externalVerification` and `humanSignoff` fields on TrustScore or redefine
+ * the blend to include them. Until then, `origin: "frontend-derived"` marks
+ * the two bars that the backend cannot yet defend.
+ */
+export interface TrustScoreBreakdown {
+  /**
+   * The dial value, normalized 0–1 (TrustScore.blended / 100 — the same
+   * number, in the domain every component already speaks).
+   */
+  blended: number;
+  /** The raw 0–100 blend as the backend stores it, for the audit line. */
+  blendedRaw: number;
+  /** EXACTLY four, in this order — the tuple is the ordering contract. */
+  components: readonly [
+    TrustScoreComponent<"extraction_quality">,
+    TrustScoreComponent<"cross_document_agreement">,
+    TrustScoreComponent<"external_verification">,
+    TrustScoreComponent<"human_signoff">,
+  ];
 }

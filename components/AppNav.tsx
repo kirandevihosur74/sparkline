@@ -12,11 +12,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { DEMO_REVIEW_ID } from "@/lib/data";
 
+// The review id comes from the data layer, never a literal — same rule as
+// every other value in a component.
 const NAV_ITEMS = [
   { label: "New review", href: "/reviews/new" },
-  { label: "Reviews", href: "/reviews/demo-2026-08" },
-  { label: "Audit trail", href: "/reviews/demo-2026-08/audit" },
+  { label: "Reviews", href: `/reviews/${DEMO_REVIEW_ID}` },
+  { label: "Audit trail", href: `/reviews/${DEMO_REVIEW_ID}/audit` },
 ] as const;
 
 function isActive(pathname: string, href: string): boolean {
