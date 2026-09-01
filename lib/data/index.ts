@@ -30,6 +30,14 @@ export type {
   Finding,
   ReviewSummary,
   AuditRecord,
+  RejectReason,
+  // Pipeline view-models (fixture-only — TODO(schema-gap: pipeline))
+  StageId,
+  StageState,
+  PipelineStage,
+  PipelineEvent,
+  // Derived
+  CoverageBreakdown,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
@@ -44,4 +52,8 @@ export {
   getQueryTrace,
   getAuditRecords,
   getTrustScore,
+  getStages,
+  getEvents,
+  getCoverage,
+  getDocumentAvgConfidence,
 } from "./fixtures";

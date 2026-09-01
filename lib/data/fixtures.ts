@@ -28,6 +28,10 @@ import type {
   QueryTrace,
   ReviewSummary,
   AuditRecord,
+  CoverageBreakdown,
+  PipelineStage,
+  PipelineEvent,
+  ClaimVerdict,
 } from "./types";
 import { normalizeConfidence } from "./types";
 
@@ -52,6 +56,8 @@ const documents: DocumentMeta[] = [
     datedAt: "2026-03-20",
     pageCount: 3,
     fileName: "doc-a-investment-memo.pdf",
+    sizeBytes: 622628,
+    uploadedAt: "2026-08-31T04:43:51.000Z",
     claimCount: 7,
   },
   {
@@ -62,6 +68,8 @@ const documents: DocumentMeta[] = [
     datedAt: "2026-02-10",
     pageCount: 3,
     fileName: "doc-b-engineering-report.pdf",
+    sizeBytes: 542416,
+    uploadedAt: "2026-08-31T04:43:58.000Z",
     claimCount: 5,
   },
 ];
@@ -224,7 +232,11 @@ const queryTraces: QueryTrace[] = [
   {
     flagId: STALENESS_FLAG_ID,
     query: "Freedom Forever solar Chapter 11 bankruptcy filing",
+    rationale:
+      "Counterparty standing cannot be checked against the other document \u2014 only against the public record \u2014 so the query pairs the locked counterparty name (Freedom Forever LLC) with the insolvency terms the query log fixed as parse targets: \"Chapter 11\" and \"bankruptcy\". The narrower interconnection-queue phrasing was dropped first: caiso.com ranks top-5 but project status truncates unpredictably in the snippet, so it failed the parseable-and-stable bar (serpapi-query-log.md \u00a713.7).",
+    triggeredBy: "counterparty-standing-external-check",
     searchedAt: "2026-08-31T04:47:51.937Z",
+    durationMs: 1284,
     results: [
       {
         position: 1,
@@ -296,6 +308,8 @@ const contradictionFinding: ContradictionFinding = {
   label: "Expansion installation cost",
   materiality: "high",
   status: contradictionFlag.status,
+  summary:
+    "The memo and the independent engineer price the same expansion program $25M apart \u2014 13.4% of the memo figure, and the gap lands entirely on sponsor equity. The IE number is built bottom-up from current labor rates, observed equipment pricing and mobilization costs; the memo shows no basis for its own.",
   flag: contradictionFlag,
   sourceA: {
     documentId: "doc-a",
@@ -318,6 +332,8 @@ const stalenessFinding: StalenessFinding = {
   label: "Counterparty standing",
   materiality: "critical",
   status: stalenessFlag.status,
+  summary:
+    "The memo is dated March 20, 2026 and records the master installation agreement as in good standing; Freedom Forever LLC filed a voluntary Chapter 11 petition on April 15, 2026. The memo was accurate when written \u2014 what changed is the world, and everything resting on the installer moves with it: the expansion schedule and the 25-year workmanship warranty.",
   flag: stalenessFlag,
   source: {
     documentId: "doc-a",
@@ -513,6 +529,132 @@ const auditRecords: AuditRecord[] = [
     claimValue: "25-year installer-backed workmanship warranty",
     evidenceSummary:
       "Human review: warranty mitigant not accepted while counterparty is in Chapter 11",
+    reason: "not_a_conflict",
+    note: "The 25-year workmanship warranty is quoted accurately from the agreement \u2014 nothing in the documents contradicts it, so there is no finding to carry here. The real exposure is the installer's Chapter 11, which is already tracked on the counterparty standing flag; opening a second item against the same event would double-count it.",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Pipeline — stages and reasoning stream for the analysis screen.
+//
+// TODO(schema-gap: pipeline): the backend has NO run/stage entity — no Run,
+// no Stage, no per-stage timing, no provider attribution, no event stream
+// (lib/types.ts models only the artifacts a run produces). Everything below
+// is fixture-only and must be deleted when a real Run lands. See
+// lib/data/types.ts.
+//
+// The clock is the committed evidence: the run starts at the review's
+// createdAt (04:44:02.000Z) and the live query fires at the logged SerpApi
+// timestamp (04:47:51.937Z, docs/serpapi-query-log.md) — 3:49.9 elapsed.
+// Stage durations and event timestamps are laid out against that span.
+// ---------------------------------------------------------------------------
+
+const stages: PipelineStage[] = [
+  {
+    id: "extract",
+    label: "Extract",
+    provider: "Nutrient DWS",
+    state: "done",
+    durationMs: 224_180,
+    metric: { value: 12, unit: "claims" },
+  },
+  {
+    id: "compare",
+    label: "Compare",
+    provider: "Sparkline",
+    state: "done",
+    durationMs: 2_140,
+    metric: { value: 2, unit: "flags" },
+  },
+  {
+    id: "live_check",
+    label: "Live check",
+    provider: "SerpApi",
+    state: "done",
+    durationMs: 5_610,
+    metric: { value: 1, unit: "query" },
+  },
+];
+
+/**
+ * Reasoning stream — one line per decision the run actually made, drawn from
+ * the fixture claims above. `message` is PLAIN TEXT by contract: it is
+ * rendered as a text node, never as markup.
+ */
+const events: PipelineEvent[] = [
+  {
+    timestamp: "0:00",
+    message: "Run started — 2 documents queued for extraction.",
+  },
+  {
+    timestamp: "0:06",
+    message:
+      "Nutrient DWS: doc-a-investment-memo.pdf — 3 pages, text layer present, no OCR required.",
+  },
+  {
+    timestamp: "1:53",
+    message:
+      "7 claims extracted from Project Ardenfell IC Memo — mean extraction confidence 92%.",
+  },
+  {
+    timestamp: "1:58",
+    message:
+      "Nutrient DWS: doc-b-engineering-report.pdf — 3 pages, text layer present, no OCR required.",
+  },
+  {
+    timestamp: "3:44",
+    message:
+      "5 claims extracted from the Independent Engineering Report — mean extraction confidence 81%. 12 claims total.",
+  },
+  {
+    timestamp: "3:45",
+    message:
+      "Normalizing field names: “installation cost is estimated” and “total expansion installation cost” both map to expansion_install_cost before comparison.",
+  },
+  {
+    timestamp: "3:45",
+    message:
+      "Expansion installation cost: $186M (memo p.1) against $211M (IE report p.2) — Δ $25M, 13.4%, materiality high.",
+    verdict: "conflicting",
+  },
+  {
+    timestamp: "3:46",
+    message:
+      "Portfolio capacity (250 MW) and commercial operation target (Q4 2027) agree across both documents.",
+    verdict: "consistent",
+  },
+  {
+    timestamp: "3:46",
+    message:
+      "Counterparty standing has no counterpart in the second document — routing to live check.",
+  },
+  {
+    timestamp: "3:49",
+    message:
+      "SerpApi: “Freedom Forever solar Chapter 11 bankruptcy filing” — 5 results, 3 accepted. Kroll claims agent dates the voluntary Chapter 11 petition to April 15, 2026, District of Delaware.",
+  },
+  {
+    timestamp: "3:51",
+    message:
+      "Counterparty standing: the memo is dated March 20, 2026, before the filing. Materiality critical.",
+    verdict: "stale",
+  },
+  {
+    timestamp: "3:51",
+    message:
+      "Counterparty scale: “one of the largest residential solar installers in the United States” appears verbatim in the accepted snippets — same query, opposite verdict.",
+    verdict: "corroborated",
+  },
+  {
+    timestamp: "3:51",
+    message:
+      "Workmanship warranty depends on the counterparty standing above — subjective, routed to a human.",
+    verdict: "review_required",
+  },
+  {
+    timestamp: "3:52",
+    message:
+      "Run complete — 12 claims, 2 flags, 2 private assumptions left unverified, trust score 72.",
   },
 ];
 
@@ -523,6 +665,8 @@ const auditRecords: AuditRecord[] = [
 const review: ReviewSummary = {
   id: DEMO_REVIEW_ID,
   title: "Wrenfield Residential Solar Portfolio",
+  subtitle:
+    "250 MW distributed solar \u00b7 expansion tranche diligence \u00b7 Halcyon Infrastructure Partners",
   createdAt: "2026-08-31T04:44:02.000Z",
   status: "complete",
   documents,
@@ -577,3 +721,56 @@ export function getAuditRecords(): AuditRecord[] {
 export function getTrustScore(): TrustScore {
   return trustScore;
 }
+
+/** Analysis-funnel stages, in run order. Fixture-only (schema gap). */
+export function getStages(): PipelineStage[] {
+  return stages;
+}
+
+/** Reasoning-stream events, oldest first. Fixture-only (schema gap). */
+export function getEvents(): PipelineEvent[] {
+  return events;
+}
+
+/**
+ * Coverage of the review, DERIVED from getFindings() on every call — never
+ * stored, so it cannot drift from the findings it counts. Keyed to our
+ * ClaimVerdict/FlagStatus semantics, not the mockup's categories.
+ */
+export function getCoverage(): CoverageBreakdown {
+  const byVerdict: Record<ClaimVerdict, number> = {
+    conflicting: 0,
+    stale: 0,
+    corroborated: 0,
+    consistent: 0,
+    review_required: 0,
+    unverified: 0,
+  };
+  let open = 0;
+  let approved = 0;
+  let rejected = 0;
+
+  const all = getFindings();
+  for (const finding of all) {
+    byVerdict[finding.verdict] += 1;
+    if (finding.status === "approved") approved += 1;
+    else if (finding.status === "rejected") rejected += 1;
+    else open += 1;
+  }
+
+  return { total: all.length, byVerdict, open, approved, rejected };
+}
+
+/**
+ * Mean extraction confidence (0–1) across one document's claims, derived from
+ * getClaims(documentId). A function, not a stored DocumentMeta field: a
+ * stored copy would drift the moment a claim changed. null when the document
+ * has no claims (unknown, not zero).
+ */
+export function getDocumentAvgConfidence(documentId: string): number | null {
+  const docClaims = getClaims(documentId);
+  if (docClaims.length === 0) return null;
+  const total = docClaims.reduce((sum, claim) => sum + claim.confidence, 0);
+  return total / docClaims.length;
+}
+
