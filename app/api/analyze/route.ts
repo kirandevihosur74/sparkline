@@ -11,15 +11,15 @@ import { analyze } from "@/lib/analyze";
 // documents in documents/.
 
 const DEMO_DOCS = [
-  { documentId: "doc-a", file: "documents/doc-a.pdf" },
-  { documentId: "doc-b", file: "documents/doc-b.pdf" },
+  { documentId: "doc-a", filename: "doc-a.pdf" },
+  { documentId: "doc-b", filename: "doc-b.pdf" },
 ];
 
 async function runDemoAnalysis() {
   const docs = await Promise.all(
     DEMO_DOCS.map(async (d) => ({
       documentId: d.documentId,
-      file: await readFile(path.join(process.cwd(), d.file)),
+      file: await readFile(path.join(process.cwd(), "documents", d.filename)),
     }))
   );
   return analyze(docs);

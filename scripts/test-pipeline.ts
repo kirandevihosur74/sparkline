@@ -9,7 +9,7 @@ import type { ClaimState, ClaimType } from "../lib/types";
 config({ path: ".env.local", quiet: true });
 config({ quiet: true });
 
-const EXPECTED: Record<ClaimType, ClaimState> = {
+const EXPECTED: Partial<Record<ClaimType, ClaimState>> = {
   EXPANSION_INSTALL_COST: "CONFLICTING",
   CAPACITY: "CORROBORATED",
   COD: "CORROBORATED",

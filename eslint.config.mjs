@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Nutrient Web SDK assets copied by scripts/copy-viewer-assets.mjs
+    "public/nutrient-viewer-lib/**",
   ]),
 ]);
 
