@@ -102,6 +102,7 @@ export type {
   WorkspacePolicy,
   // Compliance copy
   ComplianceCopy,
+  RunData,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
@@ -146,4 +147,5 @@ export {
   getVerificationRules,
   getWorkspacePolicy,
   getComplianceCopy,
+  getFixtureRun,
 } from "./fixtures";

@@ -23,17 +23,15 @@
  * out, exactly as buildTrustBreakdown does in lib/data/fixtures.ts.
  *
  * HONESTY, which is most of this screen:
- *   - `contentHash` is a FIXTURE-ONLY placeholder. The backend ReviewRecord
- *     carries no hash — the digest lives inside the DWS signature and is never
- *     surfaced — so the column is labelled as a placeholder, the
- *     "fixture-sha256:" prefix is rendered rather than trimmed away, and the
- *     footnotes say it out loud. Nothing here has been verified against a
- *     document.
- *   - `signedDocumentUrl` is a recorded path, not a link: POST /api/sign
- *     returns 501 and stores nothing, so no signed PDF exists to open. When
- *     the field is absent the row says so instead of leaving a blank cell.
- *   - `reason` and `note` are the same schema gap: ReviewRecord records THAT a
- *     reviewer rejected something, never why.
+ *   - `contentHash` on a REAL signature is the SHA-256 of the signed PDF
+ *     bytes ("sha256:" prefix) that POST /api/sign returned. On the committed
+ *     fixture rows it is still a placeholder, and the "fixture-sha256:" prefix
+ *     is rendered rather than trimmed away so the two can never be confused.
+ *   - `signedDocumentUrl` is a link when the app serves the PDF
+ *     (/api/records/…) and a recorded path otherwise. When the field is absent
+ *     the row says so instead of leaving a blank cell.
+ *   - `reason` and `note` travel with the signed record; a rejection without
+ *     either is shown as such, never invented.
  *   - `actorId`, `countersigns` and the retention footer are frontend-only.
  *     ReviewRecord carries one free `reviewer` string — no actor entity, no
  *     role, no way to say that one signature endorses another — and nothing
@@ -312,7 +310,7 @@ export default function AuditLedger({
               Signed decisions: when each was signed, the actor who signed it
               and in what capacity, the claim it settles, the decision — or, on
               a countersignature, the decision it endorses — the evidence behind
-              it, and the placeholder record hash.
+              it, and the record hash.
             </caption>
 
             <thead>
@@ -322,8 +320,7 @@ export default function AuditLedger({
                 <HeadCell>Claim</HeadCell>
                 <HeadCell>Decision</HeadCell>
                 <HeadCell>Evidence</HeadCell>
-                {/* Labelled honestly: this is not a verified digest. */}
-                <HeadCell>Record hash (placeholder)</HeadCell>
+                <HeadCell>Record hash</HeadCell>
               </tr>
             </thead>
 
@@ -486,7 +483,16 @@ function LedgerRows({
         <Cell tight={grouped} className={rule}>
           <Hash value={record.contentHash} />
           <span className="mt-1 block text-caption text-ink-3">
-            {record.signedDocumentUrl ? (
+            {record.signedDocumentUrl?.startsWith("/api/records/") ? (
+              <a
+                href={record.signedDocumentUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-ink-2 underline decoration-line-strong underline-offset-2 hover:text-ink"
+              >
+                Open signed PDF
+              </a>
+            ) : record.signedDocumentUrl ? (
               <>
                 <span className="text-ink-3">Record path </span>
                 <span className="font-mono break-all">
@@ -671,20 +677,19 @@ function EmptyLedger({ open }: { open: number }) {
 }
 
 /**
- * What this ledger cannot stand behind, stated once at the foot of the panel
- * rather than repeated in every row.
+ * What each column can and cannot stand behind, stated once at the foot of
+ * the panel rather than repeated in every row.
  *
- * TODO(schema-gap: ReviewRecord): all three notes are the same gap — the
- * backend record carries no hash, the sign route (POST /api/sign, 501) stores
- * and serves no signed PDF, and neither the structured rejection reason nor
- * the reviewer's note survives it. Delete a note the day the field lands; do
- * not soften one before then.
+ * A row signed through POST /api/sign carries the SHA-256 of the signed PDF
+ * bytes and links the PDF; the committed fixture rows carry a
+ * "fixture-sha256:" placeholder and a path with nothing behind it. The prefix
+ * is what tells them apart, and it is rendered rather than trimmed.
  *
  * Beneath them, the retention line: workspace POLICY, read verbatim from
  * getComplianceCopy(). It is set apart by a rule and labelled as policy
  * precisely because this build implements none of it — it states what the
- * system does with a signed record, not what happened to these records, and
- * the note directly above it already says no signed PDF exists to retain.
+ * system does with a signed record, not what this build did with the PDFs it
+ * serves from data/records.
  * TODO(schema-gap: retention): nothing in lib/types.ts models retention,
  * immutability or export; the sentence is fixture copy.
  */
@@ -695,20 +700,20 @@ function Footnotes() {
     <div className="border-t border-line bg-subtle px-4 py-3">
       <ul className="flex flex-col gap-1.5">
         <li className="text-caption text-ink-3">
-          The record hash is a placeholder, not a verified digest — every value
-          is fixture-generated and carries a{" "}
-          <span className="font-mono">fixture-sha256:</span> prefix that says
-          so. The real digest sits inside the {SIGNING_PROVIDER} signature, and
-          the sign route does not return it.
+          A <span className="font-mono">sha256:</span> hash is the digest of the
+          PDF that {SIGNING_PROVIDER} signed for that decision — recompute it
+          over the file to check the row. A{" "}
+          <span className="font-mono">fixture-sha256:</span> prefix marks a
+          committed placeholder that was never signed.
         </li>
         <li className="text-caption text-ink-3">
-          No signed PDF can be opened from this ledger: the sign route stores
-          and serves nothing yet, so a record path is text rather than a link.
+          &ldquo;Open signed PDF&rdquo; serves the signed record from this app.
+          A record path without a link is a fixture entry with no file behind
+          it.
         </li>
         <li className="text-caption text-ink-3">
-          Rejection reasons and reviewer notes are fixture-only. The signed
-          record keeps that a finding was rejected, but not why — so on a real
-          backend today, a rejected row could not explain itself.
+          Rejection reasons and reviewer notes are signed with the decision and
+          printed on the record itself.
         </li>
       </ul>
 

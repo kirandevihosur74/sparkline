@@ -5,9 +5,21 @@
  * never duplicates it. Where a mockup-era shape disagrees with lib/types.ts,
  * lib/types.ts wins (audit §2).
  *
- * Everything the UI consumes flows through lib/data/ — components import
- * types from here and never fetch. There are no GET endpoints yet, so the
- * only implementation of this contract is lib/data/fixtures.ts.
+* Everything the UI consumes flows through lib/data/ — components import
+ * types from here and never fetch. Two implementations satisfy the contract:
+ * the committed fixtures (lib/data/fixtures.ts) and live runs adapted from a
+ * stored AnalysisResult (lib/data/adapt.ts), registered per request by
+ * lib/data/live.ts. Server pages resolve a run with ensureRun(id); the
+ * accessors then serve it under that id.
+ *
+ * STATUS OF THE TODO(schema-gap) NOTES BELOW, as of Day 3: the backend now
+ * records per-result live-check decisions (ExternalEvidence.results — so
+ * QueryTrace is real on live runs), page counts and excerpts, stage timings
+ * and reasoning events (RunStageUpdate / RunEvent — so PipelineStage and
+ * PipelineEvent are adapted, not authored), a live-check failure (so
+ * UnscoredTrustScore is produced, not only authored), and ReviewRecord
+ * carries contentHash, reason and note from the sign route. The notes are
+ * kept where a fixture still authors a value by hand.
  */
 
 export type {
@@ -105,6 +117,7 @@ import type {
   FlagStatus as FlagStatusT,
   TrustScore as TrustScoreT,
   ReviewRecord as ReviewRecordT,
+  Flag as FlagT,
 } from "@/lib/types";
 
 /**
@@ -1159,4 +1172,38 @@ export interface ComplianceCopy {
   auditRetention: string;
   /** Analyzing-screen expectation line. */
   analysisDuration: string;
+}
+
+// ---------------------------------------------------------------------------
+// One run, as the data layer holds it — the shape every accessor resolves
+// through. Fixture runs are authored in this shape; live runs are adapted into
+// it from a stored AnalysisResult (lib/data/adapt.ts).
+// ---------------------------------------------------------------------------
+
+export interface RunData {
+  review: ReviewSummary;
+  claims: Claim[];
+  flags: FlagT[];
+  findings: Finding[];
+  queryTraces: QueryTrace[];
+  auditRecords: AuditRecord[];
+  stages: PipelineStage[];
+  events: PipelineEvent[];
+  /**
+   * Whether this run is a REVIEW THE WORKSPACE HOLDS, or an alternate state of
+   * one it already holds. The degraded fixture is the second kind — the same
+   * Wrenfield bundle with its live check refused — so it stays addressable by
+   * id but is excluded from the portfolio; live runs are listed.
+   */
+  listed: boolean;
+  /**
+   * The actor this run sits with — who owes it the next decision.
+   *
+   * TODO(schema-gap: assignment): there is no assignment anywhere in the domain
+   * model. ReviewRecord names an actor only AFTER a decision is signed, so the
+   * contract cannot express whose queue an unsigned review is in. Fixture-only,
+   * and undefined is honest: a run nobody is named against reports that rather
+   * than borrowing the last actor who touched it.
+   */
+  assignedTo?: ActorId;
 }

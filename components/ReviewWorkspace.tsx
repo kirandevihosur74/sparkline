@@ -9,12 +9,13 @@
  * moves the queue row to its resolved state, and offers "Next finding →",
  * which advances selection to the next finding still open.
  *
- * FIXTURE-ONLY, AND NON-MUTATING. There are no GET endpoints and no write
- * endpoint the UI is allowed to call from here, so a decision made in the
- * browser is held as client state SEEDED from the fixtures and layered over
- * them. lib/data/fixtures.ts is never written to: reloading the page returns
- * the run to the state the data layer describes, which is the honest behaviour
- * for a build with no persistence.
+ * SIGNED FOR REAL. A decision is POSTed to /api/sign, where Nutrient DWS
+ * renders and digitally signs a review record; the AuditRecord that comes
+ * back — reviewer, time, SHA-256 of the signed bytes, the record's URL — is
+ * what the confirmation strip and the ledger show. While the signature is in
+ * flight the finding stays open and the bar says so; if signing fails the
+ * finding stays open and the bar names the error. "Undo decision" withdraws
+ * the row and the signed PDF behind it.
  *
  * Layout: the two columns scroll independently inside a min-h-0 flex row. The
  * page itself never scrolls (theme.css pins html/body) — that is what keeps
@@ -49,34 +50,21 @@
 import FindingsQueue from "./FindingsQueue";
 import ReviewDetail from "./ReviewDetail";
 import { useCallback, useMemo, useState } from "react";
-import {
-  getDecisionSignature,
-  getFindingQueue,
-  getQueueFindings,
-} from "@/lib/data";
 import type {
   AuditRecord,
   ClaimVerdict,
   CoverageBreakdown,
+  DecisionSignature,
   DocumentMeta,
   Finding,
+  FindingQueue,
+  FindingsFooter,
   FindingQueueFilter,
   FindingQueueFilterId,
   FlagStatus,
   QueryTrace,
   RejectReason,
 } from "@/lib/data";
-
-/**
- * Placeholder digest for a decision made in this session.
- *
- * TODO(schema-gap: ReviewRecord): the backend ReviewRecord carries NO content
- * hash — the signed-PDF digest lives inside the DWS signature and is never
- * surfaced — and nothing here has been sent to the sign route anyway. The
- * "fixture-sha256:" prefix is the same marker fixtures.ts uses so this can
- * never be mistaken for a real digest.
- */
-const SESSION_CONTENT_HASH = "fixture-sha256:unsigned-session-decision";
 
 /**
  * What the detail column says when the filter leaves nothing to decide. Both
@@ -86,14 +74,19 @@ const SESSION_CONTENT_HASH = "fixture-sha256:unsigned-session-decision";
 const NOTHING_UNDER_FILTER = (active: string, all: string) =>
   `Nothing to decide under ${active}: this filter lists none of the run's findings, so there is no evidence on screen and nothing to sign. Choose ${all} in the queue to continue.`;
 
-/** A decision taken in this session. `null` = undone, back to open. */
+/**
+ * A decision taken in this session. `pending` while Nutrient DWS is signing;
+ * `record` once the ledger row exists. `null` = undone, back to open.
+ */
 type SessionDecision = {
   decision: Exclude<FlagStatus, "open">;
-  signedAt: string;
-  reason?: RejectReason;
+  pending: boolean;
+  record?: AuditRecord;
 } | null;
 
 export interface ReviewWorkspaceProps {
+  /** The run these findings belong to — the id /api/sign records against. */
+  reviewId: string;
   /** Findings in data-layer order (flags first, by materiality). */
   findings: Finding[];
   documents: DocumentMeta[];
@@ -102,35 +95,53 @@ export interface ReviewWorkspaceProps {
   /** Signed decisions already on the ledger, keyed by `flagId` = finding id. */
   records: AuditRecord[];
   /**
-   * Which run is on screen. The signature line is only true of the ledger it
-   * was read off, so it is resolved per-run here rather than left to
-   * DecisionBar's default, which always answers for the demo run.
+   * The filter row model for THIS run — getFindingQueue(reviewId), resolved on
+   * the server. Client code cannot read the data layer for a live run (the
+   * live-run registry is server-side), so every run-scoped read arrives here
+   * as a prop, exactly as the findings do.
    */
-  reviewId: string;
+  queue: FindingQueue;
+  /**
+   * Which finding ids each filter state leaves — getQueueFindings() per
+   * filter, resolved on the server. `mine` is absent when the run cannot say
+   * who "me" is.
+   */
+  queueMembership: Partial<Record<FindingQueueFilterId, string[]>>;
+  /**
+   * The signature line per finding id — getDecisionSignature(id, reviewId) on
+   * the server — plus the empty key for no selection.
+   */
+  signatures: Record<string, DecisionSignature>;
+  /** The queue footer for THIS run — getFindingsFooter(reviewId) on the server. */
+  footer: FindingsFooter;
+  /**
+   * Who is signing, when the deployment names someone (SPARKLINE_REVIEWER).
+   * Undefined hands the question to the run's own ledger — see `signer`.
+   */
+  reviewer?: string;
 }
 
 export default function ReviewWorkspace({
+  reviewId,
   findings,
   documents,
   traces,
   records,
-  reviewId,
+  queue,
+  queueMembership,
+  signatures,
+  footer,
+  reviewer,
 }: ReviewWorkspaceProps) {
   const [decisions, setDecisions] = useState<Record<string, SessionDecision>>(
     {},
   );
+  const [signError, setSignError] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string | undefined>(
     // Open on the first finding still waiting on a human; if the run is fully
     // resolved, on the first finding there is.
     () => (findings.find((f) => f.status === "open") ?? findings[0])?.id,
   );
-
-  /**
-   * The three filter states, their counts, and who "me" resolves to on this
-   * run — all counted in the data layer off the same getFindings() this screen
-   * was handed. Nothing about assignment is decided or counted here.
-   */
-  const queue = useMemo(() => getFindingQueue(reviewId), [reviewId]);
 
   // The queue opens on the state that hides nothing; the model says which.
   const [filterId, setFilterId] = useState<FindingQueueFilterId>(
@@ -140,13 +151,15 @@ export default function ReviewWorkspace({
   const activeFilter: FindingQueueFilter =
     queue.filters.find((filter) => filter.id === filterId) ?? queue.filters[0];
 
-  /** The findings as this session sees them: fixture order, session statuses. */
+  /** The findings as this session sees them: data-layer order, session statuses. */
   const sessionFindings = useMemo(
     () =>
       findings.map((finding) => {
         const decision = decisions[finding.id];
         if (decision === undefined) return finding;
-        return withStatus(finding, decision ? decision.decision : "open");
+        if (decision === null) return withStatus(finding, "open");
+        // In flight: still open on screen until the signature exists.
+        return withStatus(finding, decision.pending ? "open" : decision.decision);
       }),
     [findings, decisions],
   );
@@ -162,11 +175,11 @@ export default function ReviewWorkspace({
    * list that would read as "none of these are yours".
    */
   const visibleFindings = useMemo(() => {
-    const allowed = getQueueFindings(filterId, reviewId);
+    const allowed = queueMembership[filterId];
     if (!allowed) return [];
-    const ids = new Set(allowed.map((finding) => finding.id));
+    const ids = new Set(allowed);
     return sessionFindings.filter((finding) => ids.has(finding.id));
-  }, [sessionFindings, filterId, reviewId]);
+  }, [sessionFindings, filterId, queueMembership]);
 
   /**
    * Coverage of the rows on screen, not of the run: the bar sits directly
@@ -181,6 +194,35 @@ export default function ReviewWorkspace({
   const selectedIndex = visibleFindings.findIndex((f) => f.id === selectedId);
   const selected =
     selectedIndex >= 0 ? visibleFindings[selectedIndex] : visibleFindings[0];
+
+  /**
+   * Who is signing, in what capacity, and where this finding sits in the
+   * queue — derived in lib/data off THIS run's ledger and findings.
+   * getDecisionSignature() infers the signer from the run's last DECISION
+   * (never a countersignature) and says "an unidentified reviewer" when a run
+   * has signed nothing at all.
+   *
+   * The deployment's reviewer (SPARKLINE_REVIEWER) wins when set: that is the
+   * person at the keyboard, and every signature this session makes is under
+   * that name. Either way the SAME name is on the pending bar and on the
+   * decision it produces — a bar that signs as one person and confirms as
+   * another is one interaction contradicting itself.
+   */
+  const signature = signatures[selected?.id ?? ""] ?? signatures[""];
+  const signer = reviewer ?? signature.name;
+  const signatureShown: DecisionSignature =
+    reviewer && reviewer !== signature.name
+      ? {
+          ...signature,
+          actor: undefined,
+          role: undefined,
+          name: reviewer,
+          segments: [reviewer, ...(signature.position ? [signature.position.text] : [])],
+          text: [` `, signature.position?.text]
+            .filter(Boolean)
+            .join(" · "),
+        }
+      : signature;
 
   /**
    * The next finding still open, wrapping past the end of the queue — of the
@@ -200,37 +242,75 @@ export default function ReviewWorkspace({
   }, [visibleFindings, selected, selectedIndex]);
 
   const resolve = useCallback(
-    (
+    async (
       findingId: string,
       decision: Exclude<FlagStatus, "open">,
       reason?: RejectReason,
     ) => {
+      setSignError((current) => ({ ...current, [findingId]: "" }));
       setDecisions((current) => ({
         ...current,
-        // The one moment this screen invents a value: the decision is taken
-        // now, so now is when it was taken.
-        [findingId]: { decision, signedAt: new Date().toISOString(), reason },
+        [findingId]: { decision, pending: true },
       }));
+      try {
+        const response = await fetch("/api/sign", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            reviewId,
+            flagId: findingId,
+            decision,
+            ...(reason ? { reason } : {}),
+            reviewer: signer,
+          }),
+        });
+        const body = (await response.json()) as {
+          record?: AuditRecord;
+          error?: string;
+        };
+        if (!response.ok || !body.record) {
+          throw new Error(body.error ?? `Signing failed (HTTP ${response.status}).`);
+        }
+        setDecisions((current) => ({
+          ...current,
+          [findingId]: { decision, pending: false, record: body.record },
+        }));
+      } catch (cause) {
+        // The finding stays open; the bar says why.
+        setDecisions((current) => ({ ...current, [findingId]: null }));
+        setSignError((current) => ({
+          ...current,
+          [findingId]: cause instanceof Error ? cause.message : String(cause),
+        }));
+      }
     },
-    [],
+    [reviewId, signer],
   );
 
   const handleApprove = useCallback(
-    (findingId: string) => resolve(findingId, "approved"),
+    (findingId: string) => void resolve(findingId, "approved"),
     [resolve],
   );
 
   const handleReject = useCallback(
     (findingId: string, reason: RejectReason) =>
-      resolve(findingId, "rejected", reason),
+      void resolve(findingId, "rejected", reason),
     [resolve],
   );
 
-  const handleUndo = useCallback((findingId: string) => {
-    // null, not delete: an undo has to beat a status the FIXTURE already
-    // resolved, which deleting the key would restore.
-    setDecisions((current) => ({ ...current, [findingId]: null }));
-  }, []);
+  const handleUndo = useCallback(
+    (findingId: string) => {
+      // null, not delete: an undo has to beat a status the data layer already
+      // resolved, which deleting the key would restore.
+      setDecisions((current) => ({ ...current, [findingId]: null }));
+      const query = new URLSearchParams({ reviewId, flagId: findingId });
+      void fetch(`/api/sign?${query}`, { method: "DELETE" }).catch(() => {
+        // The screen already shows the finding open; the ledger row, if it
+        // survives, is visible on the audit trail.
+      });
+    },
+    [reviewId],
+  );
 
   const handleNext = useCallback(() => {
     if (nextOpenId) setSelectedId(nextOpenId);
@@ -249,14 +329,12 @@ export default function ReviewWorkspace({
   const handleFilterChange = useCallback(
     (nextFilterId: FindingQueueFilterId) => {
       setFilterId(nextFilterId);
-      const allowed = getQueueFindings(nextFilterId, reviewId) ?? [];
+      const allowed = queueMembership[nextFilterId] ?? [];
       setSelectedId((current) =>
-        allowed.some((finding) => finding.id === current)
-          ? current
-          : allowed[0]?.id,
+        allowed.includes(current ?? "") ? current : allowed[0],
       );
     },
-    [reviewId],
+    [queueMembership],
   );
 
   // A run with no findings at all has no queue to render and no filter that
@@ -273,25 +351,7 @@ export default function ReviewWorkspace({
     );
   }
 
-  /**
-   * Who is signing, in what capacity, and where this finding sits in the
-   * queue — all derived in lib/data off THIS run's ledger and findings.
-   *
-   * TODO(schema-gap: session identity): there is no current-user or session
-   * shape anywhere in lib/types.ts — a reviewer's name exists only on a
-   * ReviewRecord that has ALREADY been signed. getDecisionSignature() infers
-   * the signer from the run's last DECISION (never a countersignature, which
-   * endorses rather than takes one) and says "an unidentified reviewer" when a
-   * run has signed nothing at all.
-   */
-  const signature = getDecisionSignature(selected?.id, reviewId);
-  /**
-   * The name stamped on a decision taken in this session. It is the SAME name
-   * the pending bar signs with: a bar that reads "Signing as M. Bui" and then
-   * confirms "Approved by P. Ramanathan" is one interaction contradicting
-   * itself, which is what reading the ledger's last ROW used to produce.
-   */
-  const signer = signature.name;
+  const selectedDecision = selected ? decisions[selected.id] : undefined;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
@@ -299,6 +359,7 @@ export default function ReviewWorkspace({
         findings={visibleFindings}
         breakdown={breakdown}
         queue={queue}
+        footer={footer}
         filterId={activeFilter.id}
         onFilterChange={handleFilterChange}
         selectedId={selected?.id}
@@ -311,8 +372,10 @@ export default function ReviewWorkspace({
           documents={documents}
           trace={traces.find((trace) => trace.flagId === selected.id)}
           reviewer={signer}
-          signature={signature}
-          record={recordFor(selected, decisions[selected.id], records, signer)}
+          signature={signatureShown}
+          record={recordFor(selected, selectedDecision, records)}
+          signing={selectedDecision?.pending === true}
+          signError={selectedDecision === undefined ? undefined : signError[selected.id] || undefined}
           onApprove={handleApprove}
           onReject={handleReject}
           onUndo={handleUndo}
@@ -341,7 +404,7 @@ export default function ReviewWorkspace({
 // ---------------------------------------------------------------------------
 
 /**
- * Re-stamps a finding's status without mutating the fixture object.
+ * Re-stamps a finding's status without mutating the data-layer object.
  *
  * Switching on `verdict` keeps the discriminated union intact — a bare spread
  * over the union collapses it — and carries the same status onto the flag,
@@ -360,79 +423,20 @@ function withStatus(finding: Finding, status: FlagStatus): Finding {
 }
 
 /**
- * The record behind the confirmation strip: the session's decision when there
- * is one, the ledger's when there is not, and nothing at all once a decision
- * has been undone — so the strip never shows a timestamp for a decision that
- * no longer stands.
+ * The record behind the confirmation strip: the session's signed record when
+ * there is one, the ledger's when there is not, and nothing at all once a
+ * decision has been undone — so the strip never shows a timestamp for a
+ * decision that no longer stands.
  */
 function recordFor(
   finding: Finding,
   decision: SessionDecision | undefined,
   records: AuditRecord[],
-  signer: string,
 ): AuditRecord | undefined {
   if (decision === null) return undefined;
-  if (decision) return sessionRecord(finding, decision, signer);
+  if (decision?.record) return decision.record;
+  if (decision?.pending) return undefined;
   return records.find((record) => record.flagId === finding.id);
-}
-
-/**
- * An AuditRecord for a decision taken in this session.
- *
- * Every field is DERIVED from the finding — nothing is typed in — except the
- * placeholder hash, which is marked as such. Nothing is appended to the ledger
- * here: the sign route is the only thing that can put a row in the audit
- * trail, and this screen does not call it.
- */
-function sessionRecord(
-  finding: Finding,
-  decision: NonNullable<SessionDecision>,
-  signer: string,
-): AuditRecord {
-  const { field, value, evidence } = ledgerContext(finding);
-  return {
-    flagId: finding.id,
-    reviewer: signer,
-    decision: decision.decision,
-    signedAt: decision.signedAt,
-    contentHash: SESSION_CONTENT_HASH,
-    claimField: field,
-    claimValue: value,
-    evidenceSummary: evidence,
-    reason: decision.reason,
-  };
-}
-
-/** Denormalized claim context for the ledger, read off the union member. */
-function ledgerContext(finding: Finding): {
-  field: string;
-  value: string;
-  evidence: string;
-} {
-  switch (finding.verdict) {
-    case "conflicting":
-      return {
-        field: finding.flag.field,
-        value: `${finding.flag.claimA.value} vs ${finding.flag.claimB.value}`,
-        evidence: `Cross-document: ${finding.sourceA.documentId} p.${finding.sourceA.page} vs ${finding.sourceB.documentId} p.${finding.sourceB.page} · ${finding.deltaLabel}`,
-      };
-    case "stale":
-      return {
-        field: finding.flag.claim.field,
-        value: `${finding.flag.claim.value} vs ${finding.flag.liveValue}`,
-        evidence: `Live check: ${finding.flag.query} · ${
-          finding.flag.liveSourceUrl ?? "no source URL recorded"
-        }`,
-      };
-    default:
-      return {
-        field: finding.claim.field,
-        value: finding.claim.value,
-        evidence: `${finding.source.documentId} p.${finding.source.page}${
-          finding.note ? ` · ${finding.note}` : ""
-        }`,
-      };
-  }
 }
 
 /**

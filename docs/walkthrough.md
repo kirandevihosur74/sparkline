@@ -63,8 +63,8 @@ failed stage and no score).
 ## Nav map
 
 Rail is `--spacing-rail` (188px) wide, `subtle` background, 1px `line` right
-border, wordmark **Sparkline** at the top linking to `/` (which lands on
-`/reviews/demo-2026-08/review`).
+border, wordmark **Sparkline** at the top linking to `/` (the landing page, which
+hands off to `/reviews/new` via "Launch Sparkline").
 
 | Section | Row | href | Pill | Pill source (independently recomputed) |
 |---|---|---|---|---|

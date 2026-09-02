@@ -65,9 +65,11 @@ import type {
   VerificationRule,
   WorkspacePolicy,
   ComplianceCopy,
+  RunData,
 } from "./types";
 import { normalizeConfidence } from "./types";
 import { formatUtc } from "../format";
+import { getRegisteredRun } from "./live-registry";
 
 // ---------------------------------------------------------------------------
 // Review
@@ -1219,40 +1221,9 @@ const degradedReview: ReviewSummary = {
 // degraded run existed.
 // ---------------------------------------------------------------------------
 
-interface FixtureRun {
-  review: ReviewSummary;
-  claims: ExtractedClaim[];
-  flags: Flag[];
-  findings: Finding[];
-  queryTraces: QueryTrace[];
-  auditRecords: AuditRecord[];
-  stages: PipelineStage[];
-  events: PipelineEvent[];
-  /**
-   * Whether this run is a REVIEW THE WORKSPACE HOLDS, or an alternate state of
-   * one it already holds.
-   *
-   * The degraded run is the second kind: it is the SAME Wrenfield bundle with
-   * its live check refused, sharing the demo run's title and documents. Listing
-   * it would put two rows with one project name on the index, distinguishable
-   * only by reading their subtitles — worse than one row, and a portfolio count
-   * of 7 that nobody could reconcile with 6 projects. So it stays fully
-   * addressable by id (every accessor and /reviews/{id} still serve it) and is
-   * excluded from the portfolio: getWorkspaceReviews() and the workspace strip
-   * both count `listed` runs and nothing else.
-   */
-  listed: boolean;
-  /**
-   * The actor this run sits with — who owes it the next decision.
-   *
-   * TODO(schema-gap: assignment): there is no assignment anywhere in the domain
-   * model. ReviewRecord names an actor only AFTER a decision is signed, so the
-   * contract cannot express whose queue an unsigned review is in. Fixture-only,
-   * and undefined is honest: a run nobody is named against reports that rather
-   * than borrowing the last actor who touched it.
-   */
-  assignedTo?: ActorId;
-}
+// One run as the data layer holds it — fixture or adapted live run. The
+// `listed` and `assignedTo` fields are documented on RunData in ./types.
+type FixtureRun = RunData;
 
 const runs: Record<string, FixtureRun> = {
   [DEMO_REVIEW_ID]: {
@@ -1285,6 +1256,13 @@ const runs: Record<string, FixtureRun> = {
 
 /** undefined for an unknown id — an unknown review is not the demo review. */
 function resolveRun(reviewId: string): FixtureRun | undefined {
+  // A run the server resolved for this request (live, or fixture + signed
+  // overlay) wins over the committed fixture of the same id.
+  return getRegisteredRun(reviewId) ?? runs[reviewId];
+}
+
+/** The committed fixture run itself, untouched by any overlay. */
+export function getFixtureRun(reviewId: string): RunData | undefined {
   return runs[reviewId];
 }
 

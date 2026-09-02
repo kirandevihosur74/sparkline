@@ -103,6 +103,10 @@ export interface ReviewDetailProps {
   signature?: DecisionSignature;
   /** The signed decision for this finding, once one exists. */
   record?: AuditRecord;
+  /** True while Nutrient DWS is signing this finding's record. */
+  signing?: boolean;
+  /** Why the last signature attempt failed, if it did. */
+  signError?: string;
   onApprove: (findingId: string) => void;
   onReject: (findingId: string, reason: RejectReason) => void;
   onUndo: (findingId: string) => void;
@@ -121,6 +125,8 @@ export default function ReviewDetail({
   reviewer,
   signature,
   record,
+  signing,
+  signError,
   onApprove,
   onReject,
   onUndo,
@@ -199,6 +205,8 @@ export default function ReviewDetail({
         reviewer={reviewer}
         signature={signature}
         record={record}
+        signing={signing}
+        signError={signError}
         onApprove={onApprove}
         onReject={onReject}
         onUndo={onUndo}
