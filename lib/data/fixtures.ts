@@ -78,9 +78,35 @@ import type {
   FindingRunChangeId,
   ResolvedFinding,
   LedgerEntry,
+  // Workspace screens — Dashboard, Documents, Sources, Team, Reports
+  Materiality,
+  ActorRole,
+  TraceResult,
+  WorkspaceUnknown,
+  WorkspaceDocumentExtraction,
+  WorkspaceDocumentRow,
+  WorkspaceDocuments,
+  WorkspaceSourceDomain,
+  WorkspaceSourceDomainDecision,
+  WorkspaceSourceQuery,
+  WorkspaceSources,
+  ActorActivity,
+  ActorActivityFact,
+  ActorActivityFactId,
+  WorkspaceTeam,
+  DashboardStateGroup,
+  DashboardAttentionBand,
+  DashboardAttention,
+  DashboardWaitGroup,
+  DashboardTrustReading,
+  DashboardTrustMovement,
+  DashboardTrust,
+  WorkspaceDashboard,
+  WorkspaceRunRow,
+  WorkspaceRunReport,
 } from "./types";
 import { normalizeConfidence } from "./types";
-import { formatUtc } from "../format";
+import { formatUtc, formatUtcParts } from "../format";
 import { getRegisteredRun } from "./live-registry";
 
 // ---------------------------------------------------------------------------
@@ -3897,5 +3923,942 @@ export function getShortcutSheet(): ShortcutSheet {
     title: "Keyboard shortcuts",
     groups: getShortcutGroups(),
     closeLabel: "Close shortcuts",
+  };
+}
+
+// ===========================================================================
+// WORKSPACE SCREENS — Dashboard, Documents, Sources, Team, Reports
+//
+// Five accessors, one per screen, and NOT ONE STORED NUMBER between them.
+// Everything below is counted on the call off records this file already holds:
+// the documents on each run, the claims behind them, the query traces the live
+// checks logged, the ledger rows, and the run chain. Change a fixture above
+// and every figure on all five screens moves with it.
+//
+// PROVENANCE, WHICH DIFFERS PER SCREEN AND IS NOT INTERCHANGEABLE:
+//   · Nutrient DWS produced the extraction confidences — the Documents screen
+//     names it, and nothing else does.
+//   · SerpApi produced the queries, the results and the accept/reject
+//     decisions — the Sources screen names it, and nothing else does.
+//   · Actors, decisions and countersignatures are RECORDS. No provider is
+//     named beside them, because no provider produced them.
+//
+// SCOPE: every workspace-wide accessor walks the runs the workspace LISTS
+// (RunData.listed) and their chains. That is the same basis getWorkspaceReviews()
+// and workspaceReviewers() use, so these screens and the reviews index cannot
+// report different portfolios. The degraded run is excluded by the same rule
+// that keeps it off the index: it is the demo bundle in an alternate state,
+// not a separate review, and counting its refused query as a seventh project's
+// work would double-count the bundle.
+//
+// See the section header on WORKSPACE SCREENS in ./types.ts for the two
+// schema gaps this rests on — TODO(schema-gap: Workspace) and
+// TODO(schema-gap: report).
+// ===========================================================================
+
+/** The API that extracted the claims. Named beside extraction output only. */
+const PROVIDER_EXTRACTION = "Nutrient DWS";
+
+/** The API that ran the live searches. Named beside live-check output only. */
+const PROVIDER_LIVE = "SerpApi";
+
+/** 622628 → "608 KB". Locale-free, for the same reason lib/format.ts is. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${Math.round(kb)} KB`;
+  return `${trimmedDecimal(kb / 1024, 1)} MB`;
+}
+
+/** 1284 → "1.28 s"; anything under a second stays in milliseconds. */
+function formatDuration(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${trimmedDecimal(ms / 1000, 2)} s`;
+}
+
+/** "2026-03-20" → "20 Mar 2026". The date part of the same UTC assembly. */
+function formatDateOnly(iso: string): string | undefined {
+  return formatUtcParts(iso)?.date;
+}
+
+/**
+ * The clause every workspace screen needs about the reviews it cannot cover —
+ * the ones listed with their counts only, behind which no document, claim,
+ * query or run was ever loaded.
+ *
+ * At ZERO the sentence inverts instead of printing "0 reviews are listed with
+ * counts only": a leading zero reads as a measurement of something, and what
+ * is true at zero is that the screen covers the whole portfolio. `subject`
+ * agrees in number, so callers write one sentence, not two.
+ */
+function countsOnlyClause(count: number): {
+  subject: string;
+  pronoun: string;
+  possessive: string;
+} {
+  return count === 1
+    ? { subject: "review is", pronoun: "it", possessive: "it does" }
+    : { subject: "reviews are", pronoun: "them", possessive: "they do" };
+}
+
+/** Codepoint-wise, never localeCompare — see compareReviewRows for why. */
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * The ids of every run the workspace LISTS, resolved through the registry so a
+ * signed-decision overlay or a live run is seen exactly as the accessors see
+ * it. The same filter getWorkspaceReviews() applies to build its rows.
+ */
+function listedRunIds(): string[] {
+  return Object.keys(runs).filter((id) => resolveRun(id)?.listed);
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+/** DocumentMeta.docType in the words the screen prints. */
+const DOC_TYPE_LABEL: Record<DocumentMeta["docType"], string> = {
+  "investment-memo": "Investment memo",
+  "engineering-report": "Engineering report",
+};
+
+/** Why a superseded revision cannot be opened. Consequence, then cause. */
+const SUPERSEDED_DOCUMENT_NOTE =
+  "There is no file to open: a later run of this bundle replaced this revision, and the build ships the current bundle's documents only. The excerpts on the findings that cite it are the record.";
+
+/** What a document with no claims behind it says instead of showing 0%. */
+const NO_EXTRACTION: WorkspaceUnknown = {
+  headline: "No extraction reading",
+  reason:
+    "No claim on this run was extracted from this document, so there is no field confidence to average. That is an absent reading, not a low one.",
+};
+
+/**
+ * The Documents screen — every document the workspace holds, deduplicated by
+ * id across each listed run's chain, newest run first so the current revision
+ * of a file wins the row.
+ *
+ * DERIVED FROM: each run's `review.documents` (DocumentMeta), the claims behind
+ * them via getClaims(), the mean field confidence via getDocumentAvgConfidence()
+ * — Nutrient DWS's output, and the only thing on this screen attributed to it —
+ * and getRunHistory() for the label of the run that read each file.
+ *
+ * THE COUNT IS NOT THE PORTFOLIO. Five of the six reviews on the index are
+ * listed with their counts only and have no documents behind them at all, so
+ * this screen counts far fewer documents than a reader might expect from six
+ * reviews. `scopeNote` says that outright; the number is never padded to match.
+ */
+export function getWorkspaceDocuments(): WorkspaceDocuments {
+  const rows: WorkspaceDocumentRow[] = [];
+  const seen = new Set<string>();
+  let reviewsWithDocuments = 0;
+
+  for (const headId of listedRunIds()) {
+    const chain = runChain(headId);
+    if (chain.length === 0) continue;
+    const head = chain[chain.length - 1];
+    if (head.run.review.documents.length > 0) reviewsWithDocuments += 1;
+    const currentDocumentIds = new Set(
+      head.run.review.documents.map((doc) => doc.id),
+    );
+    const history = getRunHistory(headId);
+
+    // Newest run first: a document byte-identical across two runs is reported
+    // once, against the most recent run that read it.
+    for (let index = chain.length - 1; index >= 0; index -= 1) {
+      const entry = chain[index];
+      const analysisRun = history?.runs.find((run) => run.id === entry.id);
+      for (const document of entry.run.review.documents) {
+        if (seen.has(document.id)) continue;
+        seen.add(document.id);
+
+        const documentClaims = getClaims(document.id, entry.id);
+        const average = getDocumentAvgConfidence(document.id, entry.id);
+        const extraction: WorkspaceDocumentExtraction =
+          average === null
+            ? {
+                claimCount: 0,
+                provider: PROVIDER_EXTRACTION,
+                text: joinSegments([PROVIDER_EXTRACTION, NO_EXTRACTION.headline]),
+                unavailable: NO_EXTRACTION,
+              }
+            : {
+                value: average,
+                display: percentLabel(average),
+                claimCount: documentClaims.length,
+                provider: PROVIDER_EXTRACTION,
+                text: joinSegments([
+                  PROVIDER_EXTRACTION,
+                  `${percentLabel(average)} mean field confidence across ${plural(
+                    documentClaims.length,
+                    "claim",
+                    "claims",
+                  )}`,
+                ]),
+              };
+
+        const superseded = !currentDocumentIds.has(document.id);
+        const datedText = formatDateOnly(document.datedAt) ?? document.datedAt;
+
+        rows.push({
+          document,
+          reviewId: headId,
+          reviewTitle: head.run.review.title,
+          reviewHref: `/reviews/${headId}`,
+          runId: entry.id,
+          runLabel: analysisRun?.label ?? RUN_ENTRY_LABEL,
+          typeLabel: DOC_TYPE_LABEL[document.docType],
+          sizeText: formatBytes(document.sizeBytes),
+          datedText,
+          metaText: joinSegments([
+            DOC_TYPE_LABEL[document.docType],
+            document.author,
+            datedText,
+            plural(document.pageCount, "page", "pages"),
+          ]),
+          extraction,
+          superseded,
+          ...(superseded
+            ? { unavailableNote: SUPERSEDED_DOCUMENT_NOTE }
+            : { viewerUrl: `/${document.id}.pdf` }),
+        });
+      }
+    }
+  }
+
+  // Current documents first, then superseded revisions; within each, the order
+  // they were received (upload-slot order, as getDocuments() returns them).
+  rows.sort((a, b) => {
+    if (a.superseded !== b.superseded) return a.superseded ? 1 : -1;
+    const receivedA = Date.parse(a.document.uploadedAt);
+    const receivedB = Date.parse(b.document.uploadedAt);
+    if (receivedA !== receivedB) return receivedA - receivedB;
+    return compareText(a.document.title, b.document.title);
+  });
+
+  const pageCount = rows.reduce((sum, row) => sum + row.document.pageCount, 0);
+  const claimCount = rows.reduce(
+    (sum, row) => sum + row.extraction.claimCount,
+    0,
+  );
+  const supersededCount = rows.filter((row) => row.superseded).length;
+  const reviewsWithoutDocuments = getWorkspaceReviews().filter(
+    (row) => row.scenery,
+  ).length;
+
+  return {
+    rows,
+    documentCount: rows.length,
+    pageCount,
+    claimCount,
+    supersededCount,
+    reviewsWithDocuments,
+    reviewsWithoutDocuments,
+    text: joinSegments([
+      plural(rows.length, "document", "documents"),
+      plural(pageCount, "page", "pages"),
+      `${plural(claimCount, "claim", "claims")} extracted`,
+    ]),
+    scopeNote:
+      reviewsWithoutDocuments === 0
+        ? "Every review in this workspace has documents behind it, so this screen covers the whole portfolio."
+        : `${reviewsWithoutDocuments} ${
+            countsOnlyClause(reviewsWithoutDocuments).subject
+          } listed with counts only — no file was loaded behind ${
+            countsOnlyClause(reviewsWithoutDocuments).pronoun
+          }, so nothing from ${
+            countsOnlyClause(reviewsWithoutDocuments).pronoun
+          } is counted here. This screen counts documents, not reviews.`,
+    provider: PROVIDER_EXTRACTION,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Sources — the SerpApi screen
+// ---------------------------------------------------------------------------
+
+const SOURCE_DECISION_LABEL: Record<WorkspaceSourceDomainDecision, string> = {
+  accepted: "Accepted",
+  rejected: "Rejected",
+  mixed: "Accepted on one query, rejected on another",
+};
+
+/** What the screen says when no live check ever completed. */
+const NO_LIVE_QUERIES: WorkspaceUnknown = {
+  headline: "No live sources consulted",
+  reason:
+    "No run in this workspace completed a live check, so there is no search, no result and no accept-or-reject decision to show. The screen is empty because the record is.",
+};
+
+/**
+ * The Sources screen — every live-verification search this workspace ran, the
+ * domains they returned, and what the pipeline did with each.
+ *
+ * DERIVED FROM: the QueryTrace records on every listed run's chain. `query`,
+ * `rationale`, `durationMs`, `searchedAt` and every result's domain, decision
+ * and reason are read off those traces; the rule that routed each query is
+ * resolved from QueryTrace.triggeredBy against getVerificationRules(), whose
+ * ids match that string on purpose.
+ *
+ * THIS IS THE SerpApi SCREEN, and it is the only one. Nothing else in this app
+ * is SerpApi's output — extraction is Nutrient DWS's, decisions are records —
+ * so `provider` is stated here and nowhere it does not belong.
+ */
+export function getWorkspaceSources(): WorkspaceSources {
+  // The row and the trace it was built from travel together: the domain
+  // rollup below reads the results off THIS trace rather than looking the
+  // trace up a second time by id, so the two halves of the screen cannot end
+  // up describing different searches.
+  const logged: { query: WorkspaceSourceQuery; trace: QueryTrace }[] = [];
+  const rules = getVerificationRules();
+
+  for (const headId of listedRunIds()) {
+    const chain = runChain(headId);
+    if (chain.length === 0) continue;
+    const head = chain[chain.length - 1];
+    const history = getRunHistory(headId);
+
+    for (const entry of chain) {
+      const analysisRun = history?.runs.find((run) => run.id === entry.id);
+      for (const trace of entry.run.queryTraces) {
+        const accepted = trace.results.filter(
+          (result) => result.decision === "accepted",
+        ).length;
+        const rejected = trace.results.length - accepted;
+        const rule = rules.find((candidate) => candidate.id === trace.triggeredBy);
+
+        logged.push({
+          trace,
+          query: {
+            reviewId: headId,
+            reviewTitle: head.run.review.title,
+            runId: entry.id,
+            runLabel: analysisRun?.label ?? RUN_ENTRY_LABEL,
+            flagId: trace.flagId,
+            query: trace.query,
+            rationale: trace.rationale,
+            ...(rule ? { rule } : {}),
+            ruleLabel: rule?.name ?? trace.triggeredBy,
+            searchedAt: trace.searchedAt,
+            durationMs: trace.durationMs,
+            durationText: formatDuration(trace.durationMs),
+            resultCount: trace.results.length,
+            acceptedCount: accepted,
+            rejectedCount: rejected,
+            text: joinSegments([
+              plural(trace.results.length, "result", "results"),
+              `${accepted} accepted`,
+              `${rejected} rejected`,
+              formatDuration(trace.durationMs),
+            ]),
+          },
+        });
+      }
+    }
+  }
+
+  logged.sort(
+    (a, b) =>
+      Date.parse(b.query.searchedAt) - Date.parse(a.query.searchedAt),
+  );
+  const queries = logged.map((entry) => entry.query);
+
+  // One entry per DOMAIN, across every query that returned it — so a domain
+  // consulted by two runs is one row that says it was returned twice, not two
+  // rows that read as two different sources.
+  const domainOrder: string[] = [];
+  const byDomain = new Map<
+    string,
+    {
+      accepted: number;
+      rejected: number;
+      returned: number;
+      bestPosition: number;
+      reasons: string[];
+      topResult: TraceResult;
+    }
+  >();
+
+  for (const { trace } of logged) {
+    for (const result of trace.results) {
+      const existing = byDomain.get(result.domain);
+      if (!existing) {
+        domainOrder.push(result.domain);
+        byDomain.set(result.domain, {
+          accepted: result.decision === "accepted" ? 1 : 0,
+          rejected: result.decision === "rejected" ? 1 : 0,
+          returned: 1,
+          bestPosition: result.position,
+          reasons: [result.reason],
+          topResult: result,
+        });
+        continue;
+      }
+      existing.returned += 1;
+      if (result.decision === "accepted") existing.accepted += 1;
+      else existing.rejected += 1;
+      if (!existing.reasons.includes(result.reason)) {
+        existing.reasons.push(result.reason);
+      }
+      if (result.position < existing.bestPosition) {
+        existing.bestPosition = result.position;
+        existing.topResult = result;
+      }
+    }
+  }
+
+  const domains: WorkspaceSourceDomain[] = domainOrder.map((domain) => {
+    const tally = byDomain.get(domain)!;
+    const decision: WorkspaceSourceDomainDecision =
+      tally.rejected === 0
+        ? "accepted"
+        : tally.accepted === 0
+          ? "rejected"
+          : "mixed";
+    return {
+      domain,
+      decision,
+      decisionLabel: SOURCE_DECISION_LABEL[decision],
+      acceptedCount: tally.accepted,
+      rejectedCount: tally.rejected,
+      timesReturned: tally.returned,
+      bestPosition: tally.bestPosition,
+      reasons: tally.reasons,
+      topResult: tally.topResult,
+      text: joinSegments([
+        domain,
+        SOURCE_DECISION_LABEL[decision],
+        `returned on ${plural(tally.returned, "query", "queries")}`,
+      ]),
+    };
+  });
+
+  // Accepted domains first, then rejected, each by the best rank it reached.
+  const DECISION_RANK: Record<WorkspaceSourceDomainDecision, number> = {
+    accepted: 0,
+    mixed: 1,
+    rejected: 2,
+  };
+  domains.sort((a, b) => {
+    if (DECISION_RANK[a.decision] !== DECISION_RANK[b.decision]) {
+      return DECISION_RANK[a.decision] - DECISION_RANK[b.decision];
+    }
+    if (a.bestPosition !== b.bestPosition) return a.bestPosition - b.bestPosition;
+    return compareText(a.domain, b.domain);
+  });
+
+  const resultCount = queries.reduce((sum, query) => sum + query.resultCount, 0);
+  const acceptedCount = queries.reduce(
+    (sum, query) => sum + query.acceptedCount,
+    0,
+  );
+  const rejectedCount = resultCount - acceptedCount;
+  const reviewsWithoutQueries = getWorkspaceReviews().filter(
+    (row) => !queries.some((query) => query.reviewId === row.id),
+  ).length;
+
+  return {
+    provider: PROVIDER_LIVE,
+    queries,
+    domains,
+    accepted: domains.filter((domain) => domain.decision !== "rejected"),
+    rejected: domains.filter((domain) => domain.decision === "rejected"),
+    queryCount: queries.length,
+    resultCount,
+    acceptedCount,
+    rejectedCount,
+    domainCount: domains.length,
+    ...(queries[0] ? { lastSearchedAt: queries[0].searchedAt } : {}),
+    text: joinSegments([
+      plural(queries.length, "query", "queries"),
+      plural(resultCount, "result", "results"),
+      `${acceptedCount} accepted`,
+      `${rejectedCount} rejected`,
+    ]),
+    reviewsWithoutQueries,
+    scopeNote:
+      reviewsWithoutQueries === 0
+        ? "Counted across every analysis run this workspace holds — every review in the portfolio reached a live source."
+        : `Counted across every analysis run this workspace holds. ${plural(
+            reviewsWithoutQueries,
+            "review",
+            "reviews",
+          )} ran no live check in the record — a claim only reaches a live source when a verification rule routes it there, and a review listed with counts only has no claims to route.`,
+    ...(queries.length === 0 ? { unavailable: NO_LIVE_QUERIES } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Team
+// ---------------------------------------------------------------------------
+
+/**
+ * What each capacity is entitled to do. Fixture copy, not a count — the same
+ * three distinctions ActorRole draws, in the words the screen prints.
+ */
+const ROLE_NOTE: Record<ActorRole, string> = {
+  Reviewer: "Signs decisions on findings.",
+  "Pipeline owner": "Executes analysis runs, and signs nothing.",
+  Approver: COUNTERSIGNATURE_POLICY,
+};
+
+const LAST_ACTIVE_LABEL = "Last recorded activity";
+
+/** What the label becomes when the record holds no instant for an actor. */
+const NO_RECORDED_ACTIVITY = "No recorded activity";
+
+/**
+ * What an actor with nothing on the ledger says instead of a row of zeros.
+ * The honest reading is that the RECORD is empty, not that the person is idle.
+ */
+const NO_ACTIVITY_NOTE =
+  "Nothing in this workspace's record names this person: no decision signed, no countersignature, no run executed. That is an absence of records, not a measure of their work.";
+
+const ACTIVITY_LABEL: Record<ActorActivityFactId, [string, string]> = {
+  decisions: ["decision signed", "decisions signed"],
+  countersignatures: ["countersignature", "countersignatures"],
+  runs: ["analysis run executed", "analysis runs executed"],
+  reviews_waiting: ["review waiting on them", "reviews waiting on them"],
+};
+
+/**
+ * The Team screen — the three workspace actors, each with the activity the
+ * RECORD attributes to them.
+ *
+ * DERIVED FROM: getActors() for the roster, getLedgerEntries() on every listed
+ * run for the activity (a decision row that is not a countersignature, a
+ * countersignature row, a run row), and getWorkspaceReviews() for the reviews
+ * still owed a decision by each actor.
+ *
+ * ZERO IS NEVER PRINTED. A fact is built only when its count is non-zero, so
+ * K. Shah's row reads "2 analysis runs executed" and does not also report that
+ * he has signed no decisions — a Pipeline owner signing nothing is what the
+ * role MEANS, and "0 decisions" would read as an underperforming reviewer. An
+ * actor with no facts at all carries `inactiveNote` in their place.
+ *
+ * No provider is named on this screen: no provider produced any of it.
+ */
+export function getWorkspaceTeam(): WorkspaceTeam {
+  const reviewRows = getWorkspaceReviews();
+  const members: ActorActivity[] = getActors().map((actor) => {
+    let decisionCount = 0;
+    let countersignatureCount = 0;
+    let runCount = 0;
+    let lastActiveAt: string | undefined;
+
+    for (const headId of listedRunIds()) {
+      for (const entry of getLedgerEntries(headId)) {
+        if (entry.actor?.id !== actor.id) continue;
+        if (entry.kind === "decision") {
+          if (entry.countersignature) countersignatureCount += 1;
+          else decisionCount += 1;
+        } else {
+          runCount += 1;
+        }
+        if (
+          lastActiveAt === undefined ||
+          Date.parse(entry.at) > Date.parse(lastActiveAt)
+        ) {
+          lastActiveAt = entry.at;
+        }
+      }
+    }
+
+    // Reviews whose NEXT decision is owed by this actor. A review still
+    // analyzing is excluded even when it names the reviewer it lands with:
+    // nobody is holding that one up yet, and counting it would report work
+    // that has not been handed over.
+    const waitingRows = reviewRows.filter(
+      (row) => row.waiting.state === "reviewer" && row.waiting.actor?.id === actor.id,
+    );
+    const waitingFindingCount = waitingRows.reduce(
+      (sum, row) => sum + row.counts.open,
+      0,
+    );
+
+    const counted: [ActorActivityFactId, number][] = [
+      ["decisions", decisionCount],
+      ["countersignatures", countersignatureCount],
+      ["runs", runCount],
+      ["reviews_waiting", waitingRows.length],
+    ];
+    const facts: ActorActivityFact[] = counted
+      .filter(([, value]) => value > 0)
+      .map(([id, value]) => {
+        const [singular, pluralForm] = ACTIVITY_LABEL[id];
+        return {
+          id,
+          value,
+          label: value === 1 ? singular : pluralForm,
+          text: plural(value, singular, pluralForm),
+        };
+      });
+
+    return {
+      actor,
+      roleNote: ROLE_NOTE[actor.role],
+      facts,
+      decisionCount,
+      countersignatureCount,
+      runCount,
+      waitingReviewCount: waitingRows.length,
+      waitingFindingCount,
+      ...(lastActiveAt ? { lastActiveAt } : {}),
+      lastActiveLabel: lastActiveAt ? LAST_ACTIVE_LABEL : NO_RECORDED_ACTIVITY,
+      ...(facts.length === 0 ? { inactiveNote: NO_ACTIVITY_NOTE } : {}),
+      text:
+        facts.length === 0
+          ? NO_ACTIVITY_NOTE
+          : joinSegments(facts.map((fact) => fact.text)),
+    };
+  });
+
+  const activeCount = members.filter((member) => member.facts.length > 0).length;
+
+  return {
+    members,
+    memberCount: members.length,
+    activeCount,
+    text: joinSegments([
+      plural(members.length, "person", "people"),
+      `${activeCount} with recorded activity`,
+    ]),
+    scopeNote:
+      "Activity is counted off the audit ledger and the review portfolio — signatures, countersignatures and analysis runs. Work that leaves no record leaves no number here.",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+const MATERIALITY_LABEL: Record<Materiality, string> = {
+  critical: "Critical",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
+
+/** Attention order: the band that has to be looked at first comes first. */
+const MATERIALITY_ORDER: readonly Materiality[] = [
+  "critical",
+  "high",
+  "medium",
+  "low",
+];
+
+/** Why the trust roll-up has no single number. */
+const NO_WORKSPACE_TRUST_AVERAGE =
+  "There is no workspace trust score. A score is recorded per run, over that run's own documents; averaging six of them would print a figure nothing recorded and no one could check.";
+
+/** A finding nobody has decided yet — the same test getCoverage() applies. */
+function isOpenFinding(finding: Finding): boolean {
+  return finding.status !== "approved" && finding.status !== "rejected";
+}
+
+/**
+ * The finding line on a roll-up group, and the two zeros it keeps apart: a
+ * group with nothing left to decide reads "No open findings", a group whose
+ * reviews have produced no finding at all reads "No findings yet" — the same
+ * words the row itself uses (buildReviewCounts). Collapsing the two would tell
+ * a reader that an analysis in progress has been cleared.
+ */
+function openFindingsText(open: number, total: number): string {
+  if (open > 0) return plural(open, "open finding", "open findings");
+  return total === 0 ? NO_FINDINGS_YET : NO_OPEN_FINDINGS;
+}
+
+/**
+ * The Dashboard — the workspace in one screen, assembled entirely from
+ * accessors that already exist.
+ *
+ * DERIVED FROM: getWorkspaceReviews() for the state groups and the waiting-on
+ * roll-up, getFindings() on each listed run for the materiality bands, and
+ * getRunHistory()/getRunDiff() for the one cross-run trust movement this build
+ * can state.
+ *
+ * TWO THINGS IT DELIBERATELY DOES NOT DO. It states no trend, sparkline or
+ * "this quarter" figure — nothing in this build records a time series, so any
+ * of them would be invented. And it computes no average trust: see
+ * NO_WORKSPACE_TRUST_AVERAGE. Where the roll-up can only count and not break
+ * down — the reviews listed with counts only — it says so and keeps the two
+ * numbers adding up.
+ */
+export function getWorkspaceDashboard(): WorkspaceDashboard {
+  const reviewRows = getWorkspaceReviews();
+
+  // --- Reviews by state -----------------------------------------------------
+  const states: DashboardStateGroup[] = (
+    Object.keys(STATE_RANK) as WorkspaceReviewState[]
+  )
+    .sort((a, b) => STATE_RANK[a] - STATE_RANK[b])
+    .map((state) => {
+      const grouped = reviewRows.filter((row) => row.state === state);
+      const openFindings = grouped.reduce(
+        (sum, row) => sum + row.counts.open,
+        0,
+      );
+      const totalFindings = grouped.reduce(
+        (sum, row) => sum + row.counts.total,
+        0,
+      );
+      return {
+        state,
+        label: STATE_LABEL[state],
+        count: grouped.length,
+        openFindings,
+        reviews: grouped,
+        text: joinSegments([
+          plural(grouped.length, "review", "reviews"),
+          openFindingsText(openFindings, totalFindings),
+        ]),
+      };
+    })
+    .filter((group) => group.count > 0);
+
+  // --- What needs attention -------------------------------------------------
+  const openFindingCount = reviewRows.reduce(
+    (sum, row) => sum + row.counts.open,
+    0,
+  );
+  const openFindings: Finding[] = listedRunIds().flatMap((id) =>
+    getFindings(id).filter(isOpenFinding),
+  );
+  const bands: DashboardAttentionBand[] = MATERIALITY_ORDER.map(
+    (materiality) => {
+      const count = openFindings.filter(
+        (finding) => finding.materiality === materiality,
+      ).length;
+      return {
+        materiality,
+        label: MATERIALITY_LABEL[materiality],
+        count,
+        text: `${count} ${materiality}`,
+      };
+    },
+  ).filter((band) => band.count > 0);
+  const bandedCount = bands.reduce((sum, band) => sum + band.count, 0);
+  const countedOnlyCount = openFindingCount - bandedCount;
+  const attention: DashboardAttention = {
+    openFindingCount,
+    bands,
+    bandedCount,
+    countedOnlyCount,
+    ...(countedOnlyCount > 0
+      ? {
+          countedOnlyNote: `${plural(
+            countedOnlyCount,
+            "open finding sits",
+            "open findings sit",
+          )} on reviews listed with counts only — no queue was loaded behind them, so nothing records how material they are.`,
+        }
+      : {}),
+    text: joinSegments([
+      plural(openFindingCount, "open finding", "open findings"),
+      ...bands.map((band) => band.text),
+    ]),
+  };
+
+  // --- Waiting on whom ------------------------------------------------------
+  // One group per person owed a decision, then the runs still analyzing, then
+  // the reviews nobody is holding up.
+  const waiting: DashboardWaitGroup[] = [];
+  const reviewerGroups = new Map<string, DashboardWaitGroup>();
+  for (const row of reviewRows) {
+    if (row.waiting.state !== "reviewer") continue;
+    const actor = row.waiting.actor;
+    const key = actor?.id ?? "unassigned";
+    const group = reviewerGroups.get(key) ?? {
+      state: "reviewer" as const,
+      ...(actor ? { actor } : {}),
+      reviewCount: 0,
+      openFindings: 0,
+      text: "",
+    };
+    group.reviewCount += 1;
+    group.openFindings += row.counts.open;
+    reviewerGroups.set(key, group);
+  }
+  for (const group of reviewerGroups.values()) {
+    waiting.push({
+      ...group,
+      text: joinSegments([
+        group.actor ? group.actor.name : `${WAITING_ON} a reviewer`,
+        group.actor ? group.actor.role : "",
+        plural(group.reviewCount, "review", "reviews"),
+        plural(group.openFindings, "open finding", "open findings"),
+      ]),
+    });
+  }
+  waiting.sort((a, b) => {
+    if (a.openFindings !== b.openFindings) return b.openFindings - a.openFindings;
+    return compareText(a.actor?.name ?? "", b.actor?.name ?? "");
+  });
+
+  for (const state of ["analysis", "nobody"] as const) {
+    const grouped = reviewRows.filter((row) => row.waiting.state === state);
+    if (grouped.length === 0) continue;
+    const openFindings = grouped.reduce((sum, row) => sum + row.counts.open, 0);
+    const totalFindings = grouped.reduce((sum, row) => sum + row.counts.total, 0);
+    waiting.push({
+      state,
+      reviewCount: grouped.length,
+      openFindings,
+      text: joinSegments([
+        state === "analysis" ? `${WAITING_ON} analysis` : `${WAITING_ON} nobody`,
+        plural(grouped.length, "review", "reviews"),
+        openFindingsText(openFindings, totalFindings),
+      ]),
+    });
+  }
+
+  // --- Trust across runs ----------------------------------------------------
+  const readings: DashboardTrustReading[] = reviewRows
+    .filter((row) => row.trust.value !== undefined)
+    .map((row) => ({ reviewId: row.id, title: row.title, trust: row.trust }))
+    .sort((a, b) => {
+      const valueA = a.trust.value ?? 0;
+      const valueB = b.trust.value ?? 0;
+      if (valueA !== valueB) return valueB - valueA;
+      return compareText(a.title, b.title);
+    });
+
+  const movements: DashboardTrustMovement[] = [];
+  for (const headId of listedRunIds()) {
+    const history = getRunHistory(headId);
+    const delta = history?.diff?.trust;
+    if (!history || !delta || !history.previous) continue;
+    movements.push({
+      reviewId: headId,
+      title: getReview(headId)?.title ?? headId,
+      delta,
+      runText: `${history.previous.label} → ${history.current.label}`,
+    });
+  }
+
+  const unavailableCount = reviewRows.length - readings.length;
+  const trust: DashboardTrust = {
+    readings,
+    scoredCount: readings.length,
+    unavailableCount,
+    movements,
+    text: joinSegments([
+      `${plural(readings.length, "review", "reviews")} scored`,
+      unavailableCount > 0
+        ? `${plural(unavailableCount, "review", "reviews")} recorded no score`
+        : "",
+    ]),
+    note: NO_WORKSPACE_TRUST_AVERAGE,
+  };
+
+  return {
+    reviewCount: reviewRows.length,
+    states,
+    attention,
+    waiting,
+    trust,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Reports — the record of analysis runs
+// ---------------------------------------------------------------------------
+
+/**
+ * Why this screen lists runs. There is no report entity anywhere in this
+ * build, so rather than invent one, the screen reports what the system
+ * actually records.
+ */
+const RUN_REPORT_HEADLINE_NOTE =
+  "Sparkline generates no reports. What it records is analysis runs and what changed between one run and the next, so that is what this screen lists — the record, not a document produced from it.";
+
+/** What a first run says where a diff would go. */
+const NO_COMPARISON =
+  "Nothing to compare — no earlier run of this bundle is recorded.";
+
+/**
+ * The Reports screen — every analysis run this workspace holds, newest first,
+ * each with the diff it produced against the run before it.
+ *
+ * DERIVED FROM: getRunHistory() for each listed bundle's chain, and
+ * buildRunDiff() over each ADJACENT PAIR of runs in it — so a chain of three
+ * runs would give the second and third rows a diff each, all of them counted
+ * by comparing the two finding sets rather than authored.
+ *
+ * TODO(schema-gap: report): there is no report, export or schedule entity in
+ * lib/types.ts. When one lands, this is not its view-model — it is what stood
+ * here honestly while there was nothing to report on.
+ */
+export function getWorkspaceRunReport(): WorkspaceRunReport {
+  const rows: WorkspaceRunRow[] = [];
+  let bundleCount = 0;
+
+  for (const headId of listedRunIds()) {
+    const history = getRunHistory(headId);
+    const chain = runChain(headId);
+    if (!history || chain.length === 0) continue;
+    bundleCount += 1;
+    const head = chain[chain.length - 1];
+
+    history.runs.forEach((run, index) => {
+      const previous = index > 0 ? chain[index - 1] : undefined;
+      const current = chain[index];
+      const diff = previous
+        ? buildRunDiff(previous.id, previous.run, current.id, current.run)
+        : undefined;
+
+      rows.push({
+        run,
+        reviewId: headId,
+        reviewTitle: head.run.review.title,
+        reviewHref: `/reviews/${headId}`,
+        runHref: `/reviews/${run.id}`,
+        ownerText: run.owner
+          ? joinSegments([run.owner.name, run.owner.role])
+          : RUN_OWNER_UNRECORDED,
+        outcomeText: joinSegments([
+          plural(run.findingCount, "finding", "findings"),
+          plural(run.claimCount, "claim", "claims"),
+          plural(run.documentCount, "document", "documents"),
+        ]),
+        ...(diff ? { diff } : {}),
+        comparisonNote: diff ? diff.text : NO_COMPARISON,
+      });
+    });
+  }
+
+  rows.sort(
+    (a, b) =>
+      Date.parse(b.run.completedAt ?? b.run.startedAt) -
+      Date.parse(a.run.completedAt ?? a.run.startedAt),
+  );
+
+  const reviewsWithoutRuns = getWorkspaceReviews().filter(
+    (row) => !rows.some((entry) => entry.reviewId === row.id),
+  ).length;
+
+  return {
+    rows,
+    runCount: rows.length,
+    bundleCount,
+    reviewsWithoutRuns,
+    failedCount: rows.filter((row) => row.run.failed).length,
+    text: joinSegments([
+      plural(rows.length, "analysis run", "analysis runs"),
+      plural(bundleCount, "document bundle", "document bundles"),
+    ]),
+    headlineNote: RUN_REPORT_HEADLINE_NOTE,
+    scopeNote:
+      reviewsWithoutRuns === 0
+        ? "Every review in this workspace has an analysis run behind it, so this record covers the whole portfolio."
+        : `${reviewsWithoutRuns} ${
+            countsOnlyClause(reviewsWithoutRuns).subject
+          } listed with counts only — no run was recorded behind ${
+            countsOnlyClause(reviewsWithoutRuns).pronoun
+          }, so ${
+            countsOnlyClause(reviewsWithoutRuns).possessive
+          } not appear here.`,
   };
 }
