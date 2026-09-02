@@ -8,8 +8,9 @@
  * visible regardless of document length. That is the whole reason the page
  * itself never scrolls (theme.css base layer).
  *
- * States (from `finding.status`, never from local state):
+ * States (from `finding.status` plus the signing flag, never from local state):
  *   pending  — "Signing as {reviewer}" + Reject finding / Approve finding
+ *   signing  — same strip, buttons disabled, "Signing with Nutrient DWS…"
  *   approved — confirmation strip on `accent-soft`
  *   rejected — confirmation strip on `alert-soft`
  *
@@ -30,9 +31,10 @@
  * lib/data and never typed here, with the deciding pair repeated as kbd chips
  * inside the two buttons they belong to. Both rows are `shrink-0`, so the
  * strip costs the scrolling evidence a line and costs the pinned bar nothing.
- * The strip lists only what the state it is shown in can honour: once the
- * finding is signed, Approve and Reject have no buttons left to press and drop
- * off it.
+ * The strip lists only what the state it is shown in can honour: while a
+ * signature is in flight both decision buttons are disabled, and once the
+ * finding is signed they are gone altogether, so in either state Approve and
+ * Reject drop off the strip and out of the buttons' chips together.
  *
  * Client component: it owns the reject-reason choice and the decision callbacks.
  */
@@ -59,12 +61,6 @@ import { formatUtc } from "@/lib/format";
  * Who signs. DESIGN_SYSTEM.md: "Nutrient DWS" attributes extraction AND
  * signing, because the API does that work — so the provider name sits next to
  * its output, here the signature line.
- *
- * TODO(schema-gap: provider attribution on findings): only PipelineStage
- * carries a `provider` field (lib/data/types.ts). ReviewRecord records the
- * reviewer and the signed document URL but never who produced the signature,
- * so this tag is a frontend constant. Read it off the record once the backend
- * attributes signatures; do not reconcile the two.
  */
 const SIGNING_PROVIDER = "Nutrient DWS";
 
@@ -183,8 +179,13 @@ const HINT_CHIP = `${CHIP_BASE} border-line text-ink-3`;
  */
 const HINT_SHORTCUTS = getHintShortcuts();
 
-/** What is left of them once the finding has been decided. */
-const RESOLVED_HINT_SHORTCUTS = HINT_SHORTCUTS.filter(
+/**
+ * What is left of them once the finding can no longer be decided by hand —
+ * signed, or mid-signature with Nutrient DWS. Both states put the deciding
+ * keys out of reach for the same reason: there is no enabled Approve or Reject
+ * button for them to press.
+ */
+const UNDECIDABLE_HINTS = HINT_SHORTCUTS.filter(
   (shortcut) => shortcut.group !== DECIDING_GROUP,
 );
 
@@ -250,6 +251,9 @@ const REJECT_REASONS = Object.keys(REJECT_REASON) as RejectReason[];
  */
 const DEFAULT_REJECT_REASON: RejectReason = "not_a_conflict";
 
+/** A real record is served by the app; fixture paths are recorded, not served. */
+const SERVED_RECORD_PREFIX = "/api/records/";
+
 export interface DecisionBarProps {
   /** The finding under review. `finding.status` drives which state renders. */
   finding: Finding;
@@ -268,13 +272,8 @@ export interface DecisionBarProps {
   reviewer: string;
   /**
    * The signed decision for this finding, once one exists — supplies the
-   * timestamp, the rejection reason and the reviewer's note.
-   *
-   * TODO(schema-gap: ReviewRecord): a Finding carries only FlagStatus — no
-   * decision timestamp, no reviewer, no reason and no note. All four live on
-   * AuditRecord (whose `reason` and `note` are themselves fixture-only: the
-   * sign route persists neither). Without a record the strip says what it does
-   * not know rather than inventing a time.
+   * timestamp, the rejection reason, the reviewer's note, the content hash
+   * and the signed record's URL.
    */
   record?: AuditRecord;
   /**
@@ -299,6 +298,10 @@ export interface DecisionBarProps {
    * reviewer" when a run has signed nothing at all.
    */
   signature?: DecisionSignature;
+  /** True while the signature is being made; the buttons wait. */
+  signing?: boolean;
+  /** Why the last signature attempt failed. The finding stays open. */
+  signError?: string;
   /** Pre-selected rejection reason. Defaults to "Not a conflict". */
   defaultRejectReason?: RejectReason;
   onApprove?: (findingId: string) => void;
@@ -320,11 +323,21 @@ function formatSignedAt(iso: string | undefined): string | undefined {
   return iso ? formatUtc(iso) : undefined;
 }
 
+/** "sha256:d618a37c…" — enough of a digest to compare against the ledger. */
+function shortHash(hash: string | undefined): string | undefined {
+  if (!hash || hash.startsWith("fixture-")) return undefined;
+  const separator = hash.indexOf(":");
+  const digest = separator >= 0 ? hash.slice(separator + 1) : hash;
+  return `${separator >= 0 ? hash.slice(0, separator + 1) : ""}${digest.slice(0, 12)}…`;
+}
+
 export default function DecisionBar({
   finding,
   reviewer,
   record,
   signature = getDecisionSignature(finding.id),
+  signing = false,
+  signError,
   defaultRejectReason = DEFAULT_REJECT_REASON,
   onApprove,
   onReject,
@@ -340,8 +353,10 @@ export default function DecisionBar({
       <>
         {/* The two deciding keys the strip lists are also printed on the
             buttons below, off the same bindings — the strip and the chips
-            cannot say different things. */}
-        <HintStrip shortcuts={HINT_SHORTCUTS} />
+            cannot say different things. While Nutrient DWS is signing they
+            drop off BOTH at once, because the buttons they name are disabled
+            for the duration. */}
+        <HintStrip shortcuts={signing ? UNDECIDABLE_HINTS : HINT_SHORTCUTS} />
 
         <div
           role="group"
@@ -371,6 +386,7 @@ export default function DecisionBar({
                       name={`reject-reason-${finding.id}`}
                       value={code}
                       checked={reason === code}
+                      disabled={signing}
                       onChange={() => setReason(code)}
                       className="size-3.5 accent-ink"
                     />
@@ -385,39 +401,61 @@ export default function DecisionBar({
           ) : null}
 
           <div className="flex items-center justify-between gap-4 px-5 py-3">
-            {/*
-             * "Signing as M. Bui · Reviewer · finding 2 of 11 · Nutrient DWS".
-             * Built from the signature's PARTS rather than its joined `text` so
-             * the name can carry the emphasis and the rest stays metadata — the
-             * segments and their order are still the data layer's. A run that
-             * names nobody has no role and no actor, and the name is then the
-             * say-so copy; a finding outside this run's queue has no position,
-             * and the segment is left off rather than reported as zero.
-             */}
-            <p className="text-body text-ink-2">
-              {signature.prefix}{" "}
-              <span className="font-medium text-ink">{signature.name}</span>
-              {signature.role ? (
-                <span className="text-ink-3"> · {signature.role}</span>
-              ) : null}
-              {signature.position ? (
-                <span className="tabular text-ink-3">
-                  {" "}
-                  · {signature.position.text}
-                </span>
-              ) : null}
-              <span className="text-ink-3"> · {SIGNING_PROVIDER}</span>
-            </p>
+            <div className="min-w-0">
+              {/*
+               * "Signing as M. Bui · Reviewer · finding 2 of 11 · Nutrient DWS".
+               * Built from the signature's PARTS rather than its joined `text` so
+               * the name can carry the emphasis and the rest stays metadata — the
+               * segments and their order are still the data layer's. A run that
+               * names nobody has no role and no actor, and the name is then the
+               * say-so copy; a finding outside this run's queue has no position,
+               * and the segment is left off rather than reported as zero. While
+               * Nutrient DWS is signing, the line says so instead.
+               */}
+              <p aria-live="polite" className="text-body text-ink-2">
+                {signing ? (
+                  <>
+                    Signing with{" "}
+                    <span className="font-medium text-ink">
+                      {SIGNING_PROVIDER}
+                    </span>
+                    <span className="text-ink-3"> · as {signature.name}…</span>
+                  </>
+                ) : (
+                  <>
+                    {signature.prefix}{" "}
+                    <span className="font-medium text-ink">{signature.name}</span>
+                    {signature.role ? (
+                      <span className="text-ink-3"> · {signature.role}</span>
+                    ) : null}
+                    {signature.position ? (
+                      <span className="tabular text-ink-3">
+                        {" "}
+                        · {signature.position.text}
+                      </span>
+                    ) : null}
+                    <span className="text-ink-3"> · {SIGNING_PROVIDER}</span>
+                  </>
+                )}
+              </p>
 
-            <div className="flex items-center gap-2">
+              {signError ? (
+                <p role="alert" className="mt-0.5 text-caption text-alert">
+                  Not signed — {signError}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
               {choosingReason ? (
                 <button
                   type="button"
+                  disabled={signing}
                   onClick={() => {
                     setChoosingReason(false);
                     setReason(defaultRejectReason);
                   }}
-                  className="rounded px-2 py-2 text-body text-ink-3 hover:text-ink-2 focus-visible:shadow-selected focus-visible:outline-none"
+                  className="rounded px-2 py-2 text-body text-ink-3 hover:text-ink-2 focus-visible:shadow-selected focus-visible:outline-none disabled:text-line-strong"
                 >
                   Cancel rejection
                 </button>
@@ -425,6 +463,7 @@ export default function DecisionBar({
 
               <button
                 type="button"
+                disabled={signing}
                 aria-expanded={choosingReason}
                 aria-label={
                   choosingReason
@@ -439,13 +478,16 @@ export default function DecisionBar({
                   onReject?.(finding.id, reason);
                   setChoosingReason(false);
                 }}
-                className="inline-flex items-center gap-1.5 rounded border border-line bg-surface px-3.5 py-2 text-body font-medium text-alert hover:bg-alert-soft focus-visible:shadow-selected focus-visible:outline-none"
+                className="inline-flex items-center gap-1.5 rounded border border-line bg-surface px-3.5 py-2 text-body font-medium text-alert hover:bg-alert-soft focus-visible:shadow-selected focus-visible:outline-none disabled:text-line-strong disabled:hover:bg-surface"
               >
                 {REJECT_LABEL}
                 {/* The button's own aria-label already names the action, so the
                     chip is decoration to a screen reader and the accessible name
-                    is unchanged; the key is announced in the strip above. */}
-                {REJECT_SHORTCUT ? (
+                    is unchanged; the key is announced in the strip above. It is
+                    dropped while the button is disabled: a chip on a control
+                    that cannot be pressed would advertise a key that does
+                    nothing. */}
+                {REJECT_SHORTCUT && !signing ? (
                   <kbd className={REJECT_CHIP}>{REJECT_SHORTCUT.key}</kbd>
                 ) : null}
               </button>
@@ -453,12 +495,13 @@ export default function DecisionBar({
               {/* The one shadow-action element while the finding is open. */}
               <button
                 type="button"
+                disabled={signing}
                 aria-label={`${APPROVE_LABEL} — ${finding.label}`}
                 onClick={() => onApprove?.(finding.id)}
-                className="inline-flex items-center gap-1.5 rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none"
+                className="inline-flex items-center gap-1.5 rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line-strong disabled:shadow-none"
               >
-                {APPROVE_LABEL}
-                {APPROVE_SHORTCUT ? (
+                {signing ? "Signing…" : APPROVE_LABEL}
+                {APPROVE_SHORTCUT && !signing ? (
                   <kbd className={APPROVE_CHIP}>{APPROVE_SHORTCUT.key}</kbd>
                 ) : null}
               </button>
@@ -473,6 +516,10 @@ export default function DecisionBar({
   const approved = finding.status === "approved";
   const signedAt = formatSignedAt(record?.signedAt);
   const rejectReason = record?.reason ? REJECT_REASON[record.reason] : undefined;
+  const hash = shortHash(record?.contentHash);
+  const recordUrl = record?.signedDocumentUrl?.startsWith(SERVED_RECORD_PREFIX)
+    ? record.signedDocumentUrl
+    : undefined;
 
   return (
     <>
@@ -481,9 +528,10 @@ export default function DecisionBar({
        * finding signed there is no Approve or Reject button for them to press,
        * and a strip that still named them would be the screen claiming a key
        * that does nothing. What is left is what still works here — the queue
-       * keys, and the sheet.
+       * keys, and the sheet. The pending strip drops the same two while a
+       * signature is in flight, for the same reason.
        */}
-      <HintStrip shortcuts={RESOLVED_HINT_SHORTCUTS} />
+      <HintStrip shortcuts={UNDECIDABLE_HINTS} />
 
       <div
         role="group"
@@ -514,6 +562,27 @@ export default function DecisionBar({
               ) : null}
               <span className="text-ink-3"> · {SIGNING_PROVIDER}</span>
             </p>
+
+            {/* The digest and the record itself — what makes this strip an
+                audit statement rather than a claim. Both come off the signed
+                AuditRecord: a fixture hash prints nothing, and a path the app
+                does not serve is not offered as a link. */}
+            {hash || recordUrl ? (
+              <p className="mt-0.5 text-caption text-ink-3">
+                {hash ? <span className="tabular font-mono">{hash}</span> : null}
+                {hash && recordUrl ? " · " : null}
+                {recordUrl ? (
+                  <a
+                    href={recordUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-ink-2 underline decoration-line-strong underline-offset-2 hover:text-ink"
+                  >
+                    Open signed record
+                  </a>
+                ) : null}
+              </p>
+            ) : null}
 
             {record?.note ? (
               <p className="mt-1 line-clamp-2 text-caption text-ink-2">

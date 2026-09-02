@@ -2,9 +2,8 @@
  * /reviews/[id]/audit — screen 6 of DESIGN_SYSTEM.md: the audit ledger.
  *
  * Server component. Every value on the screen is read here, once, from
- * lib/data and passed down as props — there are no GET endpoints, so this page
- * fetches nothing and the fixtures are the only implementation of the
- * contract.
+ * lib/data after ensureRun() has resolved the run — live or committed, with
+ * the signed decisions from its ledger overlaid.
  *
  * An unknown id is NOT quietly served the demo run's signatures: serving one
  * review's ledger under another review's id is the exact failure the data
@@ -15,6 +14,7 @@
 import type { Metadata } from "next";
 import AuditLedger from "@/components/AuditLedger";
 import { getAuditRecords, getCoverage, getReview } from "@/lib/data";
+import { ensureRun } from "@/lib/data/live";
 
 export const metadata: Metadata = {
   title: "Audit trail · Sparkline",
@@ -26,6 +26,7 @@ export default async function ReviewAuditPage({
   // Next 16: `params` is a promise and must be awaited before it can be read.
   const { id } = await params;
 
+  ensureRun(id);
   const review = getReview(id);
 
   if (!review) {

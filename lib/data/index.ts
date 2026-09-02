@@ -111,6 +111,7 @@ export type {
   Shortcut,
   ShortcutGroup,
   ShortcutSheet,
+  RunData,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
@@ -161,4 +162,5 @@ export {
   getHintShortcuts,
   getShortcutGroups,
   getShortcutSheet,
+  getFixtureRun,
 } from "./fixtures";
