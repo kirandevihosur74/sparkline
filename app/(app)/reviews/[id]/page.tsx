@@ -41,6 +41,7 @@ import {
   getReview,
   getStages,
   getTrustBreakdown,
+  getTrustFormula,
 } from "@/lib/data";
 import { ensureRun } from "@/lib/data/live";
 
@@ -112,6 +113,9 @@ export default async function AnalysisPage({
       // summary cannot drift from the cards beneath them.
       coverage={getCoverage(reviewId)}
       breakdown={breakdown}
+      // The strip under the dial, resolved here for the same reason as the
+      // breakdown: the dial is a client component and cannot read a live run.
+      formula={getTrustFormula(reviewId)}
       // Resolves the claim ids a failed stage stranded — ErrorPanel names the
       // claims rather than printing bare ids.
       claims={getClaims(undefined, reviewId)}

@@ -3659,17 +3659,32 @@ export function getTrustFormula(
     },
   ];
 
-  const result = terms.reduce((sum, term) => sum + term.weight * term.value, 0);
-  const arithmetic = `${terms
-    .map((term) => `${trimmedDecimal(term.weight, 1)} × ${term.value.toFixed(2)}`)
-    .join(" + ")} = ${result.toFixed(3)}`;
+  const blended = score.blended / 100;
+  const weighted = terms.reduce((sum, term) => sum + term.weight * term.value, 0);
 
-  // Describes THIS arithmetic — see the schema-gap note above for why
-  // TrustScore.formula (the backend's own, different algorithm) is not used.
-  const sentence =
-    "Weighted blend of extraction quality (40%) and cross-document agreement (60%).";
+  // Which arithmetic produced the number on the dial? The authored fixtures
+  // carry a 40/60 blend; a run scored by lib/score.ts carries the backend's
+  // own product (cross-reference reading × mean extraction confidence). The
+  // strip prints whichever one reproduces `blended` — never a sum the dial
+  // above it contradicts.
+  if (Math.abs(weighted - blended) <= 0.011) {
+    const arithmetic = `${terms
+      .map((term) => `${trimmedDecimal(term.weight, 1)} × ${term.value.toFixed(2)}`)
+      .join(" + ")} = ${weighted.toFixed(3)}`;
+    const sentence =
+      "Weighted blend of extraction quality (40%) and cross-document agreement (60%).";
+    return { sentence, terms, arithmetic, result: weighted };
+  }
 
-  return { sentence, terms, arithmetic, result };
+  const product = extraction.value * crossDocument.value;
+  const productTerms: readonly [TrustFormulaTerm, TrustFormulaTerm] = [
+    { componentId: extraction.id, weight: 1, value: extraction.value },
+    { componentId: crossDocument.id, weight: 1, value: crossDocument.value },
+  ];
+  const arithmetic = `${crossDocument.value.toFixed(2)} × ${extraction.value.toFixed(2)} = ${product.toFixed(3)}`;
+  // TrustScore.formula verbatim: the backend's own description of this product.
+  const sentence = score.formula;
+  return { sentence, terms: productTerms, arithmetic, result: product };
 }
 
 // ---------------------------------------------------------------------------
