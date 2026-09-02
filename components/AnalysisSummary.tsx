@@ -14,7 +14,9 @@
  *      it, then the coverage bar it composes beneath them. On a run that
  *      recorded no score there is NO DIAL: the panel names the absence and the
  *      two component bars carry what the run does know;
- *   4. the findings themselves.
+ *   4. WHAT CHANGED since the run this one re-ran — new, resolved, changed,
+ *      unchanged — read straight off the derived diff;
+ *   5. the findings themselves.
  *
  * Score first, then the counts, then the findings. A number the reviewer has to
  * take on faith is exactly what this screen exists to avoid — and a number the
@@ -31,6 +33,26 @@
  * screen's one action shadow. "Replay analysis" is a secondary control and has
  * no shadow.
  *
+ * WHEN THIS RUN LAST FINISHED, AND WHAT MOVED SINCE THE ONE BEFORE IT.
+ *
+ * Both come from `getRunHistory()`, resolved from the route id — this screen
+ * titles itself, so ContextBar deliberately does NOT put ProjectBar (and its
+ * "Last analyzed" line) above it; widening that rule would make every
+ * workspace page claim a project. See the note in ContextBar.tsx.
+ *
+ * The instant is ABSOLUTE UTC through `formatUtc`, never "N minutes ago": the
+ * fixtures are fixed in time, so an elapsed figure would be false, and one
+ * computed at render differs between the server pass and the client pass.
+ *
+ * The change line is `RunDiff`, every count of which is COUNTED by comparing
+ * the two runs' finding sets on each call — nothing in the strip is authored
+ * here, including the sentence, which the data layer assembles from those same
+ * counts. A run with no predecessor gets NO strip of numbers: "0 new · 0
+ * resolved" would report a comparison nobody ran, so it says that instead. A
+ * run the fixture registry does not hold (a live run, whose history exists
+ * only on the server that produced it) gets nothing at all, rather than the
+ * demo run's history under its name.
+ *
  * TODO(schema-gap: pipeline): the stages and the failure record rendered here
  * are FIXTURE-ONLY view-models — the backend has no Run entity, so nothing
  * records that a stage failed, what it returned, or which claims it stranded.
@@ -38,18 +60,21 @@
  */
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import ErrorPanel, { type StageFailure } from "./ErrorPanel";
 import FindingCard from "./FindingCard";
 import PipelineRail from "./PipelineRail";
 import TrustScorePanel from "./TrustScoreDial";
+import { getRunHistory } from "@/lib/data";
 import type {
   CoverageBreakdown,
   ExtractedClaim,
   Finding,
   PipelineStage,
+  RunHistory,
   TrustScoreBreakdown,
 } from "@/lib/data";
+import { formatUtc } from "@/lib/format";
 
 export interface AnalysisSummaryProps {
   reviewTitle: string;
@@ -89,6 +114,11 @@ export default function AnalysisSummary({
   onReplay,
 }: AnalysisSummaryProps) {
   const router = useRouter();
+  // The run's own history, resolved from the route this screen is mounted on.
+  // Every value below it is read off `lib/data`, never off this component.
+  const history = runHistoryForPath(usePathname());
+  const lastAnalyzed = lastAnalyzedLine(history);
+  const diff = history?.diff;
 
   const failedStages = stages.filter((stage) => stage.state === "failed");
   // A stage can be recorded as failed without a failure record; the panel
@@ -120,6 +150,14 @@ export default function AnalysisSummary({
             {reviewSubtitle ? (
               <p className="mt-2 max-w-2xl text-body text-ink-2">
                 {reviewSubtitle}
+              </p>
+            ) : null}
+            {/* WHEN, absolutely. This screen titles itself, so it carries its
+                own last-analyzed line rather than borrowing ProjectBar — see
+                the note in ContextBar.tsx. */}
+            {lastAnalyzed !== undefined && history !== undefined ? (
+              <p className="tabular mt-2 text-caption text-ink-3">
+                {lastAnalyzed} · {history.text}
               </p>
             ) : null}
           </header>
@@ -165,7 +203,44 @@ export default function AnalysisSummary({
           {/* ── 3 · the score, then the counts that produced it ─────────── */}
           <TrustScorePanel breakdown={breakdown} coverage={coverage} />
 
-          {/* ── 4 · the findings ────────────────────────────────────────── */}
+          {/* ── 4 · what moved since the run this one re-ran ─────────────
+              Its own bordered strip, so the trust layout above it — dial,
+              its two bars, the context line, the coverage bar — is untouched.
+              No shadow: this screen's one action shadow is the footer link. */}
+          {history !== undefined ? (
+            <section
+              aria-label="Change since the previous run"
+              className="rounded border border-line bg-subtle px-4 py-3"
+            >
+              {diff === undefined ? (
+                /* The system says what it does not know. A first run has
+                   nothing to be compared against, and "0 new · 0 resolved"
+                   would report a comparison that never happened. */
+                <p className="text-body text-ink-3">{NO_PREVIOUS_RUN}</p>
+              ) : (
+                <>
+                  <p className="tabular text-label text-ink-2">
+                    {history.previous !== undefined ? (
+                      <span className="text-ink-3">
+                        {COMPARED_WITH} {history.previous.label} —{" "}
+                      </span>
+                    ) : null}
+                    <span className="font-medium text-ink">{diff.text}</span>
+                  </p>
+                  {/* The arithmetic a reader can run themselves, and the one
+                      word in that line that could be misread: resolved between
+                      runs is not signed off by anybody. */}
+                  <p className="tabular mt-1.5 text-caption text-ink-3">
+                    {findingsLabel(diff.currentFindingCount)} this run,{" "}
+                    {diff.previousFindingCount} on the previous one.{" "}
+                    {RESOLVED_MEANS}
+                  </p>
+                </>
+              )}
+            </section>
+          ) : null}
+
+          {/* ── 5 · the findings ────────────────────────────────────────── */}
           <section aria-label="Findings" className="flex flex-col gap-3">
             <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
               <h2 className="text-title font-medium text-ink">Findings</h2>
@@ -240,6 +315,77 @@ export default function AnalysisSummary({
       </footer>
     </section>
   );
+}
+
+/**
+ * `/reviews/{id}` — the route this screen is mounted on, and the only place
+ * the run's id is available to it. Anything else on that shape (an extra
+ * segment) is a different screen and gets nothing.
+ */
+const REVIEWS_SEGMENT = "reviews";
+
+/** The lead-in to the diff: "Compared with Run 1 of 2 — 1 new · …". */
+const COMPARED_WITH = "Compared with";
+
+/**
+ * Said in place of the numbers, never alongside them: a run with no
+ * predecessor has not been compared with anything.
+ */
+const NO_PREVIOUS_RUN =
+  "This is the only recorded run of this bundle \u2014 there is no previous run to compare it against.";
+
+/**
+ * The distinction the count above cannot carry on its own. A finding resolved
+ * between runs was decided by NOBODY: the re-run simply stopped reporting it.
+ * A signed decision is a different event, with a name on it, and lives in the
+ * ledger. See ResolvedFinding in lib/data/types.ts.
+ */
+const RESOLVED_MEANS =
+  "\u201cResolved\u201d means this run no longer reports the finding \u2014 not that a reviewer signed it.";
+
+/**
+ * The run history behind the review this screen is showing, or undefined.
+ *
+ * Undefined covers two honest cases and invents nothing for either: a path
+ * that is not a run's own route, and an id the fixture registry holds no run
+ * for — a live run, whose history exists only on the server that produced it.
+ * Serving the demo run's history under another id is the failure the data
+ * layer exists to prevent, so there is deliberately no fallback id here.
+ */
+function runHistoryForPath(pathname: string): RunHistory | undefined {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length !== 2 || segments[0] !== REVIEWS_SEGMENT) return undefined;
+  return getRunHistory(decodeSegment(segments[1]));
+}
+
+/** A path segment as the data layer spells it; left alone if it is malformed. */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+/**
+ * "Last analyzed 31 Aug 2026, 04:47 UTC" — ABSOLUTE, through formatUtc, and
+ * never an elapsed time: the fixtures are fixed in time, so "6 days ago" would
+ * be false, and one computed at render would differ between the server pass
+ * and the client pass.
+ *
+ * When the run recorded no completion instant, `lastAnalyzedLabel` carries the
+ * say-so copy INSTEAD of a label, so this never returns a prefix with nothing
+ * after it.
+ */
+function lastAnalyzedLine(history: RunHistory | undefined): string | undefined {
+  if (history === undefined) return undefined;
+  const at =
+    history.lastAnalyzedAt === undefined
+      ? undefined
+      : formatUtc(history.lastAnalyzedAt);
+  return at === undefined
+    ? history.lastAnalyzedLabel
+    : `${history.lastAnalyzedLabel} ${at}`;
 }
 
 /** "1 stage" / "3 stages" — counted off the stages the run actually has. */

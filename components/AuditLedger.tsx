@@ -1,17 +1,51 @@
 /**
  * AuditLedger — screen 6 of DESIGN_SYSTEM.md: the signed record of every human
- * decision in one run.
+ * decision in one run, and the analysis runs that produced what was decided.
  *
- * One row per signature, in the order the data layer returns them: decisions
- * oldest first, each countersignature immediately after the decision it
- * endorses. That is NOT the same as strict signing order — an endorsement can
- * be signed after a later decision — which is why the header says what the
- * order actually is rather than claiming chronology. This component never
- * re-sorts and never filters: a ledger that reorders itself is not a ledger.
+ * One row per entry, in the order the data layer returns them — this component
+ * never re-sorts and never filters: a ledger that reorders itself is not a
+ * ledger. It does not claim an order either, because the two accessors that
+ * feed it use different ones: getAuditRecords() groups a countersignature with
+ * the decision it endorses, getLedgerEntries() puts every row on one timeline
+ * (a run by the instant it finished, a decision by the instant it was signed),
+ * and an endorsement signed after a later decision then lands after it. The
+ * header sentence is chosen from what was actually drawn, and a
+ * countersignature is joined to its decision only while it is the row directly
+ * beneath it.
  *
- * Columns: when it was signed · the actor who signed it and in what capacity ·
- * the claim it settles · the decision (and, on a rejection, the reason and the
+ * Columns: when it happened · the actor behind it and in what capacity · the
+ * claim it settles · the decision (and, on a rejection, the reason and the
  * reviewer's own words) · the evidence behind it · the record hash.
+ *
+ * ANALYSIS RUNS ARE NOT DECISIONS, and this is the one screen where confusing
+ * the two would be a lie. `getLedgerEntries()` returns a union
+ * (LedgerEntry = DecisionLedgerEntry | RunLedgerEntry) precisely so that a
+ * pipeline event cannot be written as a fake ReviewRecord — see
+ * TODO(schema-gap: run history) point 3 in lib/data/types.ts. A run row here:
+ *
+ *   - carries NO 5px dot and NO decision word. The dot and the accent/alert
+ *     label are the marks of a signed verdict; a run has none, and their
+ *     absence is the first thing that separates the two kinds of row.
+ *   - sits on `canvas`, the ground the whole app floats on, instead of the
+ *     panel's `surface`. Chrome, not record. It is a neutral token, not a
+ *     state colour, and it is NOT a coloured left border — the design system
+ *     forbids that, and there are no icons in this system to reach for
+ *     instead. (`subtle` was the obvious pick and is wrong: measured against
+ *     `surface` it is one step away in light and invisible, exactly as
+ *     ROLE_TINT below already records.)
+ *   - spans the claim / decision / evidence columns as one cell, because it
+ *     settles no claim and takes no decision. A run cannot occupy those
+ *     columns without appearing to answer them.
+ *   - says "No record hash" in the hash column in plain text — never in the
+ *     mono face that column uses for a digest, and never blank. A run signs
+ *     nothing, so there is nothing to hash, and the row states that rather
+ *     than leaving a hole a reader has to interpret.
+ *
+ * Counts follow the same line. "4 decisions · 2 reviewers" counts SIGNED ROWS
+ * and nothing else; runs are counted in their own sentence beneath it, exactly
+ * as LedgerSummary splits `decisionCount` from `runCount`. Folding a run into
+ * the decision count would credit K. Shah with a decision he never took —
+ * a Pipeline owner executes runs and signs nothing (ActorRole).
  *
  * COUNTERSIGNATURES. A row carrying `countersigns` endorses a decision another
  * actor already took; it settles nothing of its own. It is rendered as part of
@@ -62,7 +96,9 @@ import type {
   AuditRecord,
   CoverageBreakdown,
   FlagStatus,
+  LedgerEntry,
   RejectReason,
+  RunLedgerEntry,
 } from "@/lib/data";
 import { formatUtcParts } from "@/lib/format";
 
@@ -104,6 +140,60 @@ const REJECT_REASON: Record<RejectReason, string> = {
   immaterial: "Immaterial",
   resolved_elsewhere: "Resolved elsewhere",
 };
+
+/**
+ * A run row's own copy — everything a run says that the data layer does not
+ * already say for it.
+ *
+ * The run itself supplies its label ("Analysis run"), why it happened
+ * (`summary`), what it produced (`outcomeText`) and why it carries no
+ * signature (`unsignedNote`); those are read off RunLedgerEntry and never
+ * re-worded here. What is left is the framing this screen owns: the word for
+ * the KIND of row, the word for which instant the timestamp is, and the stated
+ * absence in the hash column.
+ */
+const SYSTEM_EVENT = "System event";
+/** Which instant the row is stamped with — AnalysisRun records both. */
+const RUN_COMPLETED = "Run completed";
+const RUN_STARTED = "Run started, no completion recorded";
+/** The system says what it does not know. */
+const RUN_INSTANT_UNRECORDED = "Run time not recorded";
+/**
+ * The hash column on a run row. Plain text, never the mono face the column
+ * uses for a digest: a run has no signature to hash, and a blank cell would
+ * leave the reader to decide whether the hash is missing or the signature is.
+ */
+const NO_RECORD_HASH = "No record hash";
+/** Role line when the record or the run names nobody. */
+const ROLE_UNRECORDED = "Role not recorded";
+/** What the run sentence says when the ledger holds no run at all. */
+const NO_RUNS_RECORDED = "No analysis runs recorded";
+/**
+ * The clause that keeps the two counts apart in one reading. It is on the run
+ * sentence rather than the decision sentence because the decision count is the
+ * one that must not move: it means today exactly what it meant before a run
+ * ever reached this ledger.
+ */
+const RUNS_NOT_DECISIONS =
+  "counted apart from the decisions above — a run signs nothing";
+
+/**
+ * How the header describes the countersignatures below it. Which clause is
+ * true depends on the ORDER the rows arrived in, so the component picks
+ * between them from what it actually drew: a countersignature reads as beneath
+ * its decision only while nothing sits between the two, and a ledger ordered
+ * by instant puts a later decision there whenever the endorsement was signed
+ * after it. The row itself names the decision it endorses either way.
+ */
+const COUNTERSIGNATURES_BENEATH =
+  ", each countersignature directly beneath the decision it endorses";
+const COUNTERSIGNATURES_NAMED =
+  ", each countersignature naming the decision it endorses";
+/**
+ * A ledger with no signature on it does not get to open with "every decision
+ * signed": vacuously true and read as complete. It says what happened instead.
+ */
+const NOTHING_SIGNED_IN = "Nothing has been signed in";
 
 /**
  * The actor square's tint, keyed as a total Record over ActorRole so a new
@@ -161,6 +251,14 @@ function reviewersLabel(count: number): string {
   return `${count} ${count === 1 ? "reviewer" : "reviewers"}`;
 }
 
+function runsLabel(count: number): string {
+  return `${count} ${count === 1 ? "analysis run" : "analysis runs"}`;
+}
+
+function ownersLabel(count: number): string {
+  return `${count} ${count === 1 ? "pipeline owner" : "pipeline owners"}`;
+}
+
 /** What the summary line says when nothing on this run has been signed. */
 const NO_DECISIONS_SIGNED = "No decisions signed";
 
@@ -176,7 +274,7 @@ const NO_DECISIONS_SIGNED = "No decisions signed";
  * ledger under another run's heading — the exact failure the audit page
  * refuses at the top.
  */
-function summaryLine(records: AuditRecord[]): string {
+function summaryLine(records: readonly AuditRecord[]): string {
   if (records.length === 0) return NO_DECISIONS_SIGNED;
 
   // Distinct signers, resolved actor first and the free `reviewer` string as
@@ -193,13 +291,114 @@ function summaryLine(records: AuditRecord[]): string {
  * already resolved its finding, so counting it as a decision would report one
  * four-eyes approval as two closed findings.
  */
-function decisionRows(records: AuditRecord[]): AuditRecord[] {
+function decisionRows(records: readonly AuditRecord[]): AuditRecord[] {
   return records.filter((record) => record.countersigns === undefined);
 }
 
+/**
+ * The run sentence: "2 analysis runs by K. Shah, counted apart from the
+ * decisions above — a run signs nothing".
+ *
+ * Counted off the run rows themselves, like every other number on this screen,
+ * and mirroring getLedgerSummary().runText in lib/data/fixtures.ts — which
+ * this component cannot call, for the same reason summaryLine() cannot: that
+ * accessor is keyed by review id and this component is handed rows.
+ *
+ * An owner is named only when the rows name one. A run whose owner the
+ * contract does not carry (every live run — see AnalysisRun.owner) leaves the
+ * sentence at the count, rather than borrowing the fixture owner's name.
+ */
+function runSummaryLine(runs: readonly RunLedgerEntry[]): string {
+  if (runs.length === 0) return NO_RUNS_RECORDED;
+
+  const owners: Actor[] = [];
+  for (const run of runs) {
+    const owner = run.actor;
+    if (owner && !owners.some((known) => known.id === owner.id)) {
+      owners.push(owner);
+    }
+  }
+
+  const attribution =
+    owners.length === 1
+      ? ` by ${owners[0].name}`
+      : owners.length > 1
+        ? ` across ${ownersLabel(owners.length)}`
+        : "";
+
+  return `${runsLabel(runs.length)}${attribution}, ${RUNS_NOT_DECISIONS}`;
+}
+
+/**
+ * The clause the header adds when analysis runs are on the ledger — the one
+ * sentence that tells a reader, before they reach a row, that not everything
+ * below is a signature. Said only when such a row exists, and agreeing with
+ * how many there are: one run is a system event, not "system events".
+ */
+function runsClause(count: number, anySigned: boolean): string {
+  // "The analysis run", not "The 1 analysis run" — the count is carried by the
+  // run sentence beneath, and this one only has to agree with it.
+  const noun = count === 1 ? "analysis run" : runsLabel(count);
+  const verb = count === 1 ? "sits" : "sit";
+  const mark = count === 1 ? "a system event" : "system events";
+  const subject = count === 1 ? "It signed" : "They signed";
+
+  return anySigned
+    ? ` The ${noun} behind them ${verb} in the same list, marked as ${mark}. ${subject} nothing.`
+    : ` The ${noun} that produced its findings ${verb} on the ledger below, marked as ${mark}. ${subject} nothing.`;
+}
+
+/**
+ * One row of the ledger, in the order the data layer put it in.
+ *
+ * The two members are kept apart all the way to the JSX — there is no shared
+ * "row" shape with optional decision fields, because the whole point of
+ * LedgerEntry is that a run cannot be rendered as a decision by accident.
+ */
+type LedgerRow =
+  | { kind: "decision"; record: AuditRecord }
+  | { kind: "run"; entry: RunLedgerEntry };
+
+/**
+ * Rows from whichever prop the caller supplied. `entries` is the ledger;
+ * `records` is the decisions-only shape (see AuditLedgerProps), and a caller
+ * that passes it has told this component nothing about runs — which is not
+ * the same as telling it there were none, and is why the run sentence is
+ * suppressed on that path instead of reading "No analysis runs recorded".
+ */
+function toRows(
+  entries: readonly LedgerEntry[] | undefined,
+  records: readonly AuditRecord[] | undefined,
+): LedgerRow[] {
+  if (entries) {
+    return entries.map((entry) =>
+      entry.kind === "run"
+        ? { kind: "run", entry }
+        : { kind: "decision", record: entry.record },
+    );
+  }
+
+  return (records ?? []).map((record) => ({ kind: "decision", record }));
+}
+
 export interface AuditLedgerProps {
-  /** Signed decisions in data-layer order (see the note above). Never re-sorted. */
-  records: AuditRecord[];
+  /**
+   * THE LEDGER'S ROWS in data-layer order — signed decisions AND analysis
+   * runs, from getLedgerEntries(). Never re-sorted here: that accessor orders
+   * a run by the instant it finished and a decision by the instant it was
+   * signed, which is the true order of what happened.
+   *
+   * Preferred over `records`, and the only prop that can put a run on the
+   * ledger. When it is given, `records` is ignored.
+   */
+  entries?: readonly LedgerEntry[];
+  /**
+   * Signed decisions only, from getAuditRecords() — the shape this screen was
+   * first built against. Kept so a caller that has not moved to `entries` yet
+   * still renders its decisions correctly; such a ledger simply holds no run
+   * rows and says nothing about runs at all.
+   */
+  records?: readonly AuditRecord[];
   /** Title of the run these signatures belong to — names the ledger. */
   reviewTitle?: string;
   /**
@@ -219,21 +418,72 @@ export interface AuditLedgerProps {
 }
 
 export default function AuditLedger({
+  entries,
   records,
   reviewTitle,
   reviewSubtitle,
   coverage,
   reviewHref,
 }: AuditLedgerProps) {
+  const rows = toRows(entries, records);
+
+  // The two kinds, split once and never re-merged. Every count below is taken
+  // from one side or the other, so no number on this screen can hold both.
+  const signed = rows.flatMap((row) =>
+    row.kind === "decision" ? [row.record] : [],
+  );
+  const runs = rows.flatMap((row) => (row.kind === "run" ? [row.entry] : []));
+
   // Derived on every render from the rows below, so the header cannot drift
   // from the ledger it summarizes. Approved/rejected count DECISIONS, not
-  // rows: a countersignature endorses a decision already counted here.
-  const decisions = decisionRows(records);
+  // rows: a countersignature endorses a decision already counted here, and a
+  // run decided nothing to count.
+  const decisions = decisionRows(signed);
   const approved = decisions.filter((r) => r.decision === "approved").length;
   const rejected = decisions.length - approved;
-  const countersigned = records.length - decisions.length;
+  const countersigned = signed.length - decisions.length;
 
-  const summary = summaryLine(records);
+  const summary = summaryLine(signed);
+  // Suppressed entirely on the decisions-only prop path: a component that was
+  // never handed runs may not report how many there were. See toRows().
+  const runSummary = entries ? runSummaryLine(runs) : undefined;
+
+  // Grouping is decided ONCE, here, because the header sentence describes it
+  // and the rows draw it — and the two would drift if each worked it out
+  // separately. A countersignature groups only when the decision it endorses
+  // is the row directly above it, which stops being true the moment anything
+  // else lands between them: getLedgerEntries() orders by instant, and a
+  // countersignature signed after a later decision sits after that decision.
+  const drawn = rows.map((row, index) => {
+    if (row.kind === "run") return { row, grouped: false } as const;
+
+    const previous = rows[index - 1];
+    // Only a DECISION can be endorsed, so a run above this row leaves this
+    // undefined and the divider stays.
+    const previousRecord =
+      previous?.kind === "decision" ? previous.record : undefined;
+    const countersigns = row.record.countersigns;
+
+    return {
+      row,
+      grouped:
+        countersigns !== undefined &&
+        previousRecord !== undefined &&
+        previousRecord.countersigns === undefined &&
+        previousRecord.flagId === row.record.flagId &&
+        previousRecord.signedAt === countersigns.decidedAt,
+    } as const;
+  });
+
+  // What the header may say about countersignatures: that they sit beneath
+  // their decisions only when every one of them actually does.
+  const groupedCount = drawn.filter((entry) => entry.grouped).length;
+  const countersignatureClause =
+    countersigned === 0
+      ? ""
+      : groupedCount === countersigned
+        ? COUNTERSIGNATURES_BENEATH
+        : COUNTERSIGNATURES_NAMED;
 
   // Findings the run reports as resolved but for which no signature exists.
   // Zero in both fixture runs; rendered only when the two genuinely disagree,
@@ -253,19 +503,32 @@ export default function AuditLedger({
               Audit trail
             </h1>
             <p className="mt-2 text-body text-ink-2">
-              {/* NOT "in the order it was signed": a countersignature is
-                  rendered against the decision it endorses, which puts it
-                  ahead of decisions signed before it. The line describes the
-                  order the rows are actually in. */}
-              {reviewTitle
-                ? `Every decision signed in ${reviewTitle}, each countersignature directly beneath the decision it endorses.`
-                : "Every decision signed in this run, each countersignature directly beneath the decision it endorses."}
+              {/* This line claims NO ORDER. The component renders the rows in
+                  the order it was handed and cannot know the rule behind it —
+                  getAuditRecords() groups a countersignature with its
+                  decision, getLedgerEntries() orders everything by instant —
+                  so it describes what is on the ledger and lets the rows
+                  carry their own sequence. */}
+              {signed.length === 0
+                ? `${NOTHING_SIGNED_IN} ${reviewTitle ?? "this run"}.`
+                : `Every decision signed in ${reviewTitle ?? "this run"}${countersignatureClause}.`}
+              {runs.length > 0
+                ? runsClause(runs.length, signed.length > 0)
+                : null}
             </p>
             {reviewSubtitle ? (
               <p className="mt-1 text-caption text-ink-3">{reviewSubtitle}</p>
             ) : null}
-            {/* Counted off the rows below — "4 decisions · 2 reviewers". */}
+            {/* Counted off the rows below — "4 decisions · 2 reviewers".
+                SIGNED ROWS ONLY: a run reaching this ledger must never move
+                this number, because nobody signed it. */}
             <p className="tabular mt-1 text-caption text-ink-3">{summary}</p>
+            {/* The runs, in their own sentence and their own count. */}
+            {runSummary ? (
+              <p className="tabular mt-1 text-caption text-ink-3">
+                {runSummary}
+              </p>
+            ) : null}
           </div>
 
           {/* The one shadow-action element on this screen. */}
@@ -299,7 +562,7 @@ export default function AuditLedger({
         ) : null}
       </header>
 
-      {records.length === 0 ? (
+      {rows.length === 0 ? (
         <EmptyLedger open={coverage.open} />
       ) : (
         <div className="scroll-col min-w-0 flex-1 overflow-x-auto rounded border border-line bg-surface">
@@ -307,15 +570,19 @@ export default function AuditLedger({
               header cell scrolls away with the rows underneath it. */}
           <table className="w-full border-separate border-spacing-0 text-left">
             <caption className="sr-only">
-              Signed decisions: when each was signed, the actor who signed it
-              and in what capacity, the claim it settles, the decision — or, on
-              a countersignature, the decision it endorses — the evidence behind
-              it, and the record hash.
+              {runs.length > 0
+                ? "Signed decisions and analysis runs: when each happened, the actor behind it and in what capacity, the claim it settles, the decision — or, on a countersignature, the decision it endorses — the evidence behind it, and the record hash. An analysis run settles no claim, takes no decision and carries no hash; its row says so in place of those columns."
+                : "Signed decisions: when each was signed, the actor who signed it and in what capacity, the claim it settles, the decision — or, on a countersignature, the decision it endorses — the evidence behind it, and the record hash."}
             </caption>
 
             <thead>
               <tr>
-                <HeadCell>Signed</HeadCell>
+                {/* "Signed" while every instant below IS a signing time;
+                    "When" once a run is on the ledger, because a run's
+                    completion time is not a signature and a header saying so
+                    would claim one that does not exist. Each run row names
+                    which of its two instants it is showing. */}
+                <HeadCell>{runs.length > 0 ? "When" : "Signed"}</HeadCell>
                 <HeadCell>Actor</HeadCell>
                 <HeadCell>Claim</HeadCell>
                 <HeadCell>Decision</HeadCell>
@@ -324,33 +591,39 @@ export default function AuditLedger({
               </tr>
             </thead>
 
-            {records.map((record, index) => {
-              const previous = records[index - 1];
+            {/* A ledger of runs alone is not an empty ledger — there are rows
+                on it — but it is still a run nobody has signed, and the header
+                strip says that in a count rather than in words. This says it
+                in words, once, above the rows. */}
+            {signed.length === 0 ? (
+              <NothingSignedRow open={coverage.open} />
+            ) : null}
 
-              // A countersignature belongs to the decision it endorses when
-              // that decision is the row directly above it — same finding,
-              // signed at the instant this row says it endorses. Only then is
-              // the divider dropped, because a countersignature separated from
-              // its decision must NOT read as attached to whatever precedes it.
-              const endorsesRowAbove =
-                record.countersigns !== undefined &&
-                previous !== undefined &&
-                previous.countersigns === undefined &&
-                previous.flagId === record.flagId &&
-                previous.signedAt === record.countersigns.decidedAt;
+            {drawn.map(({ row, grouped }, index) => {
+              // The rule sits on a row's top edge. The first row needs none —
+              // unless the band above it does, in which case it separates the
+              // two. A grouped countersignature drops its rule on purpose:
+              // the closed gap is what makes the pair read as one finding.
+              const divided = (index > 0 || signed.length === 0) && !grouped;
 
-              return (
+              return row.kind === "run" ? (
+                <RunRow
+                  key={`run-${row.entry.run.id}-${row.entry.at}`}
+                  entry={row.entry}
+                  divided={divided}
+                />
+              ) : (
                 <LedgerRows
-                  key={`${record.flagId}-${record.signedAt}`}
-                  record={record}
-                  divided={index > 0 && !endorsesRowAbove}
-                  grouped={endorsesRowAbove}
+                  key={`${row.record.flagId}-${row.record.signedAt}`}
+                  record={row.record}
+                  divided={divided}
+                  grouped={grouped}
                 />
               );
             })}
           </table>
 
-          <Footnotes />
+          <Footnotes runs={runs.length} />
         </div>
       )}
     </section>
@@ -538,6 +811,35 @@ function LedgerRows({
  */
 function ActorCell({ record }: { record: AuditRecord }) {
   const actor: Actor | undefined = getRecordActor(record);
+
+  return (
+    <ActorIdentity
+      actor={actor}
+      // The system says what it does not know.
+      name={actor?.name ?? record.reviewer}
+      role={actor?.role ?? ROLE_UNRECORDED}
+    />
+  );
+}
+
+/**
+ * The actor mark itself — square, name, capacity — shared by every row so that
+ * who did something is rendered the same way whether they signed it or ran it.
+ * WHAT they did is carried by the rest of the row, never by this cell.
+ *
+ * `role` is optional because a run that names no owner already says so in its
+ * name line (RunLedgerEntry.byline, "Pipeline owner not recorded"); repeating
+ * "Role not recorded" underneath it would state the same gap twice.
+ */
+function ActorIdentity({
+  actor,
+  name,
+  role,
+}: {
+  actor?: Actor;
+  name: string;
+  role?: string;
+}) {
   const tint = actor ? ROLE_TINT[actor.role] : UNATTRIBUTED_TINT;
 
   return (
@@ -558,13 +860,134 @@ function ActorCell({ record }: { record: AuditRecord }) {
         {actor?.initials}
       </span>
       <span className="min-w-0">
-        <span className="block text-ink">{actor?.name ?? record.reviewer}</span>
-        <span className="mt-0.5 block text-micro text-ink-3">
-          {/* The system says what it does not know. */}
-          {actor?.role ?? "Role not recorded"}
-        </span>
+        <span className="block text-ink">{name}</span>
+        {role ? (
+          <span className="mt-0.5 block text-micro text-ink-3">{role}</span>
+        ) : null}
       </span>
     </span>
+  );
+}
+
+/**
+ * AN ANALYSIS RUN. A system event on a ledger of signatures, and everything
+ * about the row is arranged so it cannot be misread as one.
+ *
+ * No dot, no decision word, no hash: those are what a signature looks like
+ * here, and this row has none of the three. It carries a `canvas` ground
+ * instead — the app's own background, one step further from `surface` than
+ * `subtle` in light and further still in dark, so the band reads in BOTH
+ * themes — and the claim / decision / evidence columns are spanned as a single
+ * cell, because a run answers none of those three questions.
+ *
+ * Every string on it except the framing words comes off the entry: the label,
+ * why the run happened, what it produced, and why it is unsigned.
+ */
+function RunRow({
+  entry,
+  divided,
+}: {
+  entry: RunLedgerEntry;
+  divided: boolean;
+}) {
+  const at = formatSignedAt(entry.at);
+  // getLedgerEntries() stamps a run with its completion instant and falls back
+  // to its start; the row says which one it got rather than implying the run
+  // ended when it did not.
+  const completed =
+    entry.run.completedAt !== undefined && entry.at === entry.run.completedAt;
+
+  const rule = divided ? "border-t border-line-soft" : "";
+  const ground = `${rule} bg-canvas`;
+
+  return (
+    <tbody>
+      <tr>
+        <Cell className={`${ground} tabular whitespace-nowrap`}>
+          {at ? (
+            <>
+              <span className="block text-ink-2">{at.date}</span>
+              <span className="block text-caption text-ink-3">{at.time}</span>
+              <span className="mt-0.5 block text-micro text-ink-3">
+                {completed ? RUN_COMPLETED : RUN_STARTED}
+              </span>
+            </>
+          ) : (
+            /* The system says what it does not know. */
+            <span className="text-ink-3">{RUN_INSTANT_UNRECORDED}</span>
+          )}
+        </Cell>
+
+        <Cell className={`${ground} whitespace-nowrap`}>
+          {/* Same mark as a signer's, because it is the same person type —
+              and the role beside it is the whole difference: a Pipeline owner
+              runs the pipeline and signs nothing. */}
+          <ActorIdentity
+            actor={entry.actor}
+            name={entry.actor?.name ?? entry.byline}
+            role={entry.actor?.role}
+          />
+        </Cell>
+
+        {/* Claim · Decision · Evidence, spanned: a run settles no claim and
+            takes no decision, so it may not sit in those columns as though it
+            answered them. */}
+        <Cell colSpan={3} className={ground}>
+          <span className="block text-micro uppercase text-ink-3">
+            {SYSTEM_EVENT}
+          </span>
+          <span className="mt-0.5 block font-medium text-ink-2">
+            {entry.label}
+          </span>
+          <span className="mt-0.5 block text-caption text-ink-2">
+            {entry.summary}
+          </span>
+          <span className="tabular mt-0.5 block text-caption text-ink-3">
+            {`${entry.run.label} · ${entry.outcomeText}`}
+          </span>
+        </Cell>
+
+        <Cell className={ground}>
+          {/* Deliberately NOT the mono face the hash column uses: this is the
+              absence of a digest, not a digest. And not blank — a blank cell
+              would leave the reader to work out which of the two is missing,
+              the signature or the hash of it. */}
+          <span className="block text-ink-3">{NO_RECORD_HASH}</span>
+          <span className="mt-1 block text-caption text-ink-3">
+            {entry.unsignedNote}
+          </span>
+        </Cell>
+      </tr>
+    </tbody>
+  );
+}
+
+/**
+ * A ledger with rows on it but no signature among them — the degraded run,
+ * whose one analysis run finished and whose findings nobody has decided.
+ *
+ * Consequence before cause, and it names what is outstanding, exactly as the
+ * empty ledger does: rows on the page must not let the run read as reviewed.
+ */
+function NothingSignedRow({ open }: { open: number }) {
+  return (
+    <tbody>
+      <tr>
+        <td colSpan={COLUMNS} className="px-4 pt-3.5 pb-1 align-top">
+          <p className="text-micro uppercase text-ink-3">
+            {NO_DECISIONS_SIGNED}
+          </p>
+          <p className="mt-1 max-w-prose text-body text-ink-2">
+            There is nothing signed to audit here: no finding in this run has
+            been approved or rejected.{" "}
+            {open > 0
+              ? `${findingsLabel(open)} are still waiting on a human decision.`
+              : "This run produced no findings to decide."}{" "}
+            Every row below is a system event.
+          </p>
+        </td>
+      </tr>
+    </tbody>
   );
 }
 
@@ -614,13 +1037,17 @@ function Cell({
   children,
   className = "",
   tight = false,
+  colSpan,
 }: {
   children: React.ReactNode;
   className?: string;
   tight?: boolean;
+  /** Used once: a run spans the claim / decision / evidence columns. */
+  colSpan?: number;
 }) {
   return (
     <td
+      colSpan={colSpan}
       className={`px-4 ${tight ? "pt-1 pb-3" : "py-3"} align-top text-body ${className}`}
     >
       {children}
@@ -666,8 +1093,8 @@ function EmptyLedger({ open }: { open: number }) {
           actor who signed it and in what capacity, the claim it settles, the
           decision — with the reason and the reviewer&rsquo;s own words on a
           rejection — the evidence behind it, and the record hash. Where a
-          decision needs a second signature, the countersignature follows in the
-          row directly beneath it, against the same claim.
+          decision needs a second signature, the countersignature arrives as
+          its own row against the same claim, naming the decision it endorses.
         </p>
       </div>
 
@@ -693,12 +1120,21 @@ function EmptyLedger({ open }: { open: number }) {
  * TODO(schema-gap: retention): nothing in lib/types.ts models retention,
  * immutability or export; the sentence is fixture copy.
  */
-function Footnotes() {
+function Footnotes({ runs = 0 }: { runs?: number }) {
   const { auditRetention } = getComplianceCopy();
 
   return (
     <div className="border-t border-line bg-subtle px-4 py-3">
       <ul className="flex flex-col gap-1.5">
+        {/* Only when there is such a row to explain: a note about run rows on
+            a ledger that holds none would describe something off screen. */}
+        {runs > 0 ? (
+          <li className="text-caption text-ink-3">
+            A row on the shaded ground is a system event, not a signed
+            decision: an analysis run closes no finding, carries no signature
+            and no record hash, and is counted apart from the decisions above.
+          </li>
+        ) : null}
         <li className="text-caption text-ink-3">
           A <span className="font-mono">sha256:</span> hash is the digest of the
           PDF that {SIGNING_PROVIDER} signed for that decision — recompute it

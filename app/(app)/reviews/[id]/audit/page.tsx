@@ -13,7 +13,7 @@
 
 import type { Metadata } from "next";
 import AuditLedger from "@/components/AuditLedger";
-import { getAuditRecords, getCoverage, getReview } from "@/lib/data";
+import { getCoverage, getLedgerEntries, getReview } from "@/lib/data";
 import { ensureRun } from "@/lib/data/live";
 
 export const metadata: Metadata = {
@@ -42,14 +42,21 @@ export default async function ReviewAuditPage({
     );
   }
 
-  // The signed decisions, and the coverage of the same run — so an empty
-  // ledger can name what is still outstanding rather than reading as clean.
-  const records = getAuditRecords(review.id);
+  // THE LEDGER'S ROWS — signed decisions AND the analysis runs that produced
+  // what was decided, in one ordered list from getLedgerEntries(). `entries`
+  // rather than `records` because a run row can only reach the ledger through
+  // it, and a trail that hides the runs behind the decisions is an incomplete
+  // record. The two kinds stay counted apart inside AuditLedger: a run signs
+  // nothing, so it never moves the decision count.
+  //
+  // Coverage of the same run rides along so an empty ledger can name what is
+  // still outstanding rather than reading as clean.
+  const entries = getLedgerEntries(review.id);
   const coverage = getCoverage(review.id);
 
   return (
     <AuditLedger
-      records={records}
+      entries={entries}
       reviewTitle={review.title}
       reviewSubtitle={review.subtitle}
       coverage={coverage}
