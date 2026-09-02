@@ -70,6 +70,14 @@ import type {
   ShortcutGroupId,
   ShortcutSheet,
   RunData,
+  AnalysisRun,
+  AnalysisRunTrigger,
+  RunHistory,
+  RunDiff,
+  FindingRunChange,
+  FindingRunChangeId,
+  ResolvedFinding,
+  LedgerEntry,
 } from "./types";
 import { normalizeConfidence } from "./types";
 import { formatUtc } from "../format";
@@ -1220,13 +1228,525 @@ const degradedReview: ReviewSummary = {
 };
 
 // ---------------------------------------------------------------------------
+// PREVIOUS RUN — the same Wrenfield bundle, analyzed a week earlier.
+//
+// This is the run the demo run RE-RAN. It exists so the review has a before
+// and an after: documents get revised, the bundle goes back through the
+// pipeline, and the system reports what moved. Everything the diff says is
+// COMPUTED by comparing the two finding sets (see buildRunDiff) — no count and
+// no change label below is typed in.
+//
+// WHAT HAPPENED BETWEEN THE TWO RUNS, and it is one thing: Ardenfell Engineering
+// Advisors RE-ISSUED their report. The revision this run read (16 Jan 2026) is
+// superseded by the one the demo run reads (10 Feb 2026), and two numbers moved
+// with it:
+//
+//   - Portfolio capacity: 240 MW in the January revision, against the memo's
+//     250 MW — a cross-document contradiction this run raised. The February
+//     revision re-checked the interconnection documentation and states 250 MW,
+//     so the demo run finds agreement instead, and the contradiction is GONE.
+//     NOBODY SIGNED IT. It was resolved by the re-run, and the diff says so
+//     rather than letting it read like a reviewer's decision.
+//   - Module design assumption: Tier-1 430 W modules in January, Tier-1 440 W
+//     in February. The finding survives — it is the same private design
+//     assumption with no verification strategy either time — but what it SAYS
+//     moved, so the diff carries it as changed, with the two values in the
+//     change line.
+//
+// Everything else this run found, the demo run finds again: the $25M expansion
+// cost conflict, the Chapter 11 counterparty staleness, the corroborated
+// counterparty scale, both commercial operation dates, the agreement date, the
+// warranty routed to a human, and the O&M assumption.
+//
+// NOTHING WAS SIGNED ON THIS RUN — its ledger is empty. The four signatures on
+// the demo run's ledger are all dated after the re-run and were taken against
+// the re-run's output. That is deliberate: it keeps "resolved between runs"
+// and "signed off by a reviewer" visibly separate, because the one finding
+// this run lost was lost with no signature anywhere near it.
+//
+// TODO(schema-gap: run history): the backend cannot store two runs of one
+// bundle at all — there is no Run entity, no run id on a claim or a flag, and
+// no link from one analysis to the one it replaced, so a second run can only
+// be recorded by overwriting the first. The full statement is on the run-history
+// section of lib/data/types.ts. This run is fixture-authored for that reason;
+// the diff over it is not.
+// ---------------------------------------------------------------------------
+
+export const PREVIOUS_RUN_ID = "demo-2026-08-run-1";
+
+/**
+ * The bundle as it stood on 24 Aug: the same memo, and the SUPERSEDED January
+ * revision of the engineering report.
+ *
+ * The report carries its own document id (`doc-b-r1`) rather than reusing
+ * `doc-b`, because it is a different file with different numbers on the page.
+ * Its PDF is not in this build — /public holds the current bundle only — so a
+ * finding that cites it is text evidence and says so (ResolvedFinding.
+ * supersededNote). Pointing rev-1 excerpts at the rev-2 PDF would put "240 MW"
+ * beside a page that reads 250 MW, which is the worse lie of the two.
+ */
+const previousDocuments: DocumentMeta[] = [
+  {
+    id: "doc-a",
+    title: "Wrenfield IC Memo",
+    author: "Halcyon Infrastructure Partners",
+    docType: "investment-memo",
+    datedAt: "2026-03-20",
+    pageCount: 2,
+    fileName: "doc-a-investment-memo.pdf",
+    sizeBytes: 622628,
+    uploadedAt: "2026-08-24T08:58:12.000Z",
+    claimCount: 7,
+  },
+  {
+    id: "doc-b-r1",
+    title: "Independent Engineering Report (rev 1)",
+    author: "Ardenfell Engineering Advisors",
+    docType: "engineering-report",
+    datedAt: "2026-01-16",
+    pageCount: 2,
+    fileName: "doc-b-engineering-report-r1.pdf",
+    sizeBytes: 538904,
+    uploadedAt: "2026-08-24T08:58:39.000Z",
+    claimCount: 5,
+  },
+];
+
+/**
+ * The January revision's five claims.
+ *
+ * Doc A is byte-identical across the two runs, so its seven claims are the
+ * SAME claim objects — one document, one extraction, both runs. Only the
+ * engineering report was re-issued, so only its claims are re-extracted here,
+ * under their own ids: a claim id names an extraction, and these came out of a
+ * different file. Confidences are unchanged from their February counterparts —
+ * the same fields off the same DWS surfaces — which is why both runs record
+ * the same extraction reading of 88.
+ */
+const previousClaims = {
+  b1: {
+    id: "claim-b1-r1",
+    claimType: "EXPANSION_INSTALL_COST",
+    extractionMethod: "table",
+    documentId: "doc-b-r1",
+    field: "expansion_install_cost",
+    value: "$211M",
+    confidence: normalizeConfidence(95.4),
+    sourcePage: 2,
+  },
+  b2: {
+    id: "claim-b2-r1",
+    claimType: "CAPACITY",
+    extractionMethod: "table",
+    documentId: "doc-b-r1",
+    field: "portfolio_capacity",
+    value: "240 MW",
+    confidence: normalizeConfidence(97.1),
+    sourcePage: 1,
+  },
+  b3: {
+    id: "claim-b3-r1",
+    claimType: "COD",
+    extractionMethod: "table",
+    documentId: "doc-b-r1",
+    field: "commercial_operation_date",
+    value: "Q4 2027",
+    confidence: normalizeConfidence(92.8),
+    sourcePage: 2,
+  },
+  b4: {
+    id: "claim-b4-r1",
+    claimType: "MODULE_SPEC",
+    extractionMethod: "text",
+    documentId: "doc-b-r1",
+    field: "module_design_assumption",
+    value: "Tier-1 430 W modules",
+    confidence: normalizeConfidence(62.4),
+    sourcePage: 1,
+  },
+  b5: {
+    id: "claim-b5-r1",
+    claimType: "OM_COST",
+    extractionMethod: "table",
+    documentId: "doc-b-r1",
+    field: "om_cost_assumption",
+    value: "$14.2M per year",
+    confidence: normalizeConfidence(58.9),
+    sourcePage: 2,
+  },
+} satisfies Record<string, ExtractedClaim>;
+
+/** 12 claims, same as the re-run: doc A's seven, plus rev 1's five. */
+const previousAllClaims: ExtractedClaim[] = [
+  claims.a1,
+  claims.a2,
+  claims.a3,
+  claims.a4,
+  claims.a5,
+  claims.a6,
+  claims.a7,
+  ...Object.values(previousClaims),
+];
+
+const PREVIOUS_CAPACITY_FLAG_ID = "flag-contradiction-portfolio-capacity";
+
+/** Resolved by the re-issue: 250 MW (memo) against 240 MW (IE rev 1). */
+const previousCapacityFlag: ContradictionFlag = {
+  id: PREVIOUS_CAPACITY_FLAG_ID,
+  kind: "contradiction",
+  field: "portfolio_capacity",
+  claimA: claims.a2,
+  claimB: previousClaims.b2,
+  variancePct: 4.0,
+  materiality: "MEDIUM",
+  confidence: normalizeConfidence(93.1),
+  status: "open",
+};
+
+/**
+ * The same $186M / $211M conflict the re-run raises again — open here, because
+ * nothing on this run was ever signed.
+ */
+const previousContradictionFlag: ContradictionFlag = {
+  id: CONTRADICTION_FLAG_ID,
+  kind: "contradiction",
+  field: "expansion_install_cost",
+  claimA: claims.a1,
+  claimB: previousClaims.b1,
+  variancePct: 13.4,
+  materiality: "HIGH",
+  confidence: normalizeConfidence(94.6),
+  status: "open",
+};
+
+/**
+ * The same staleness flag on the same memo claim, checked a week earlier. The
+ * Chapter 11 petition was filed on 15 April 2026 — months before either run —
+ * so both live checks reach the same public record and both report the same
+ * live value. Only `checkedAt` moves.
+ */
+const previousStalenessFlag: StalenessFlag = {
+  ...stalenessFlag,
+  checkedAt: "2026-08-24T09:03:24.000Z",
+  status: "open",
+};
+
+const previousFlags: Flag[] = [
+  previousContradictionFlag,
+  previousCapacityFlag,
+  previousStalenessFlag,
+];
+
+/**
+ * The same logged SerpApi run, re-dated to this run's clock.
+ *
+ * The result list is NOT re-authored: the query is the same string, the world
+ * it searched had not changed between 24 and 31 August, and inventing a second
+ * set of results would fabricate evidence that no log records. What differs is
+ * what genuinely differs — when the call was made and how long it took.
+ */
+const previousQueryTraces: QueryTrace[] = queryTraces.map((trace) => ({
+  ...trace,
+  searchedAt: previousStalenessFlag.checkedAt,
+  durationMs: 1402,
+}));
+
+const previousStalenessFinding: StalenessFinding = {
+  ...stalenessFinding,
+  status: previousStalenessFlag.status,
+  flag: previousStalenessFlag,
+};
+
+const previousContradictionFinding: ContradictionFinding = {
+  ...contradictionFinding,
+  status: previousContradictionFlag.status,
+  flag: previousContradictionFlag,
+  sourceB: {
+    documentId: "doc-b-r1",
+    page: 2,
+    excerpt:
+      "We estimate total expansion installation cost at $211M. Our estimate reflects current labor rates in the portfolio's target markets, observed equipment pricing, and mobilization costs.",
+  },
+};
+
+/**
+ * The finding the re-run no longer reports. It is OPEN here and appears on no
+ * ledger: when the February revision put the same 250 MW on the page, the
+ * contradiction stopped existing, and no reviewer was ever asked about it.
+ */
+const previousCapacityFinding: ContradictionFinding = {
+  id: PREVIOUS_CAPACITY_FLAG_ID,
+  verdict: "conflicting",
+  label: "Portfolio capacity",
+  materiality: "medium",
+  assignee: actors.ramanathan,
+  status: previousCapacityFlag.status,
+  summary:
+    "The memo counts 250 MW of aggregate installed and contracted capacity; the January engineering report counts 240 MW. 10 MW is 4.0% of the portfolio, and every per-MW figure in the model is quoted against the memo's number.",
+  flag: previousCapacityFlag,
+  sourceA: {
+    documentId: "doc-a",
+    page: 1,
+    excerpt:
+      "The portfolio comprises 250 MW of aggregate installed and contracted capacity across three states.",
+  },
+  sourceB: {
+    documentId: "doc-b-r1",
+    page: 1,
+    excerpt:
+      "Aggregate portfolio capacity of 240 MW is supported by the interconnection documentation reviewed to date; two interconnection agreements remained outstanding at the date of this report.",
+  },
+  deltaLabel: "Δ 10 MW · 4.0%",
+};
+
+/**
+ * The seven claim-level outcomes this run shares with the re-run. Each keeps
+ * the finding id it has on the demo run — a finding is identified by WHAT IT IS
+ * ABOUT, so the same subject stays the same finding across two analyses, which
+ * is the only reason a diff can pair them at all. The two capacity findings on
+ * the demo run are absent here: rev 1's 240 MW made capacity a contradiction,
+ * and a contradiction is one finding over two claims.
+ */
+const previousClaimFindings: ClaimFinding[] = [
+  {
+    id: "finding-counterparty-scale",
+    verdict: "corroborated",
+    label: "Counterparty scale",
+    materiality: "medium",
+    assignee: actors.bui,
+    status: "open",
+    claim: claims.a5,
+    source: {
+      documentId: "doc-a",
+      page: 2,
+      excerpt:
+        "Freedom Forever is one of the largest residential solar installers in the United States, providing national coverage and established installation crews.",
+    },
+    note: "Live snippets carry this phrase verbatim — same query as the staleness check, different verdict",
+  },
+  {
+    id: "finding-cod-target",
+    verdict: "consistent",
+    label: "Commercial operation target",
+    materiality: "low",
+    assignee: actors.ramanathan,
+    status: "open",
+    claim: claims.a3,
+    source: {
+      documentId: "doc-a",
+      page: 1,
+      excerpt: "The expansion tranche targets commercial operation in Q4 2027.",
+    },
+    note: "Matches the engineering report: achievable by Q4 2027",
+  },
+  {
+    id: "finding-cod-achievable",
+    verdict: "consistent",
+    label: "Commercial operation (IE schedule)",
+    materiality: "low",
+    assignee: actors.ramanathan,
+    status: "open",
+    claim: previousClaims.b3,
+    source: {
+      documentId: "doc-b-r1",
+      page: 2,
+      excerpt:
+        "Commercial operation of the expansion tranche is achievable by Q4 2027, provided installation mobilization proceeds on the currently contemplated timeline.",
+    },
+    note: "Matches doc-a: targets commercial operation in Q4 2027",
+  },
+  {
+    id: "finding-agreement-date",
+    verdict: "consistent",
+    label: "Agreement execution date",
+    materiality: "low",
+    assignee: actors.bui,
+    status: "open",
+    claim: claims.a7,
+    source: {
+      documentId: "doc-a",
+      page: 2,
+      excerpt:
+        "Master installation agreement with Freedom Forever LLC, executed January 2026.",
+    },
+    note: "Prose and Key Terms table agree within doc-a",
+  },
+  {
+    id: "finding-warranty",
+    verdict: "review_required",
+    label: "Workmanship warranty",
+    materiality: "high",
+    assignee: actors.bui,
+    status: "open",
+    claim: claims.a6,
+    source: {
+      documentId: "doc-a",
+      page: 2,
+      excerpt:
+        "The installer-backed 25-year workmanship warranty covers the installed base, which we view as a meaningful mitigant to long-term operations and maintenance risk.",
+    },
+    note: "Warranty value hinges on counterparty standing (see staleness flag) — routed to human review",
+  },
+  {
+    id: "finding-module-assumption",
+    verdict: "unverified",
+    label: "Module design assumption",
+    materiality: "low",
+    status: "open",
+    claim: previousClaims.b4,
+    source: {
+      documentId: "doc-b-r1",
+      page: 1,
+      excerpt:
+        "The expansion program design assumes Tier-1 430 W modules, which we consider appropriate for residential applications.",
+    },
+    note: "Private design specification — no verification strategy available",
+  },
+  {
+    id: "finding-om-cost",
+    verdict: "unverified",
+    label: "O&M cost assumption",
+    materiality: "low",
+    status: "open",
+    claim: previousClaims.b5,
+    source: {
+      documentId: "doc-b-r1",
+      page: 2,
+      excerpt:
+        "The O&M cost assumption of $14.2M per year is within market range for a portfolio of this composition and geographic spread.",
+    },
+    note: "Private commercial assumption — no verification strategy available",
+  },
+];
+
+/** 10 findings: three flags, by materiality, then the claim-level outcomes. */
+const previousFindings: Finding[] = [
+  previousStalenessFinding,
+  previousContradictionFinding,
+  previousCapacityFinding,
+  ...previousClaimFindings,
+];
+
+/**
+ * Same extraction reading as the re-run (the same fields, the same
+ * confidences), a lower cross-document reading: this run carried TWO
+ * unresolved contradictions across the same set of agreement checks. Blended
+ * on the documented 40/60 split — 0.4 × 88 + 0.6 × 55 = 68.2.
+ */
+const previousTrustScore: TrustScore = {
+  blended: 68,
+  extraction: 88,
+  crossReference: 55,
+  formula:
+    "Start at 100, subtract materiality-weighted penalties for each conflicting, stale, or review-required claim, then scale by average extraction confidence.",
+};
+
+const previousStages: PipelineStage[] = [
+  {
+    id: "extract",
+    label: "Extract",
+    provider: "Nutrient DWS",
+    state: "done",
+    durationMs: 218_400,
+    metric: { value: 12, unit: "claims" },
+  },
+  {
+    id: "compare",
+    label: "Compare",
+    provider: "Sparkline",
+    state: "done",
+    durationMs: 2_050,
+    metric: { value: 3, unit: "flags" },
+  },
+  {
+    id: "live_check",
+    label: "Live check",
+    provider: "SerpApi",
+    state: "done",
+    durationMs: 5_180,
+    metric: { value: 1, unit: "query" },
+  },
+];
+
+const previousEvents: PipelineEvent[] = [
+  {
+    timestamp: "0:00",
+    message: "Run started — 2 documents queued for extraction.",
+  },
+  {
+    timestamp: "1:50",
+    message:
+      "7 claims extracted from Wrenfield IC Memo — mean extraction confidence 92%.",
+  },
+  {
+    timestamp: "3:38",
+    message:
+      "5 claims extracted from the Independent Engineering Report (rev 1, dated 16 January 2026) — mean extraction confidence 81%. 12 claims total.",
+  },
+  {
+    timestamp: "3:39",
+    message:
+      "Expansion installation cost: $186M (memo p.1) against $211M (IE report p.2) — Δ $25M, 13.4%, materiality high.",
+    verdict: "conflicting",
+  },
+  {
+    timestamp: "3:39",
+    message:
+      "Portfolio capacity: 250 MW (memo p.1) against 240 MW (IE report p.1) — Δ 10 MW, 4.0%, materiality medium. The report notes two interconnection agreements outstanding at its date.",
+    verdict: "conflicting",
+  },
+  {
+    timestamp: "3:40",
+    message:
+      "Commercial operation target (Q4 2027) agrees across both documents.",
+    verdict: "consistent",
+  },
+  {
+    timestamp: "3:40",
+    message:
+      "Counterparty standing has no counterpart in the second document — routing to live check.",
+  },
+  {
+    timestamp: "3:44",
+    message:
+      "SerpApi: “Freedom Forever solar Chapter 11 bankruptcy filing” — 5 results, 3 accepted. Kroll claims agent dates the voluntary Chapter 11 petition to April 15, 2026, District of Delaware.",
+  },
+  {
+    timestamp: "3:45",
+    message:
+      "Counterparty standing: the memo is dated March 20, 2026, before the filing. Materiality critical.",
+    verdict: "stale",
+  },
+  {
+    timestamp: "3:45",
+    message:
+      "Run complete — 12 claims, 3 flags, 2 private assumptions left unverified, trust score 68.",
+  },
+];
+
+const previousReview: ReviewSummary = {
+  id: PREVIOUS_RUN_ID,
+  title: "Wrenfield Residential Solar Portfolio",
+  subtitle:
+    "250 MW distributed solar · expansion tranche diligence · superseded by the 31 August re-run",
+  createdAt: "2026-08-24T08:59:41.000Z",
+  status: "complete",
+  documents: previousDocuments,
+  claimCount: previousAllClaims.length,
+  flagCount: previousFlags.length,
+  queryCount: previousQueryTraces.length,
+  trustScore: previousTrustScore,
+};
+
+// ---------------------------------------------------------------------------
 // Run registry — every accessor resolves through this. DEMO_REVIEW_ID is the
 // default, so a call with no review id behaves exactly as it did before the
 // degraded run existed.
 // ---------------------------------------------------------------------------
 
 // One run as the data layer holds it — fixture or adapted live run. The
-// `listed` and `assignedTo` fields are documented on RunData in ./types.
+// `listed`, `assignedTo`, `previousRunId` and `ranByActorId` fields are
+// documented on RunData in ./types.
 type FixtureRun = RunData;
 
 const runs: Record<string, FixtureRun> = {
@@ -1243,6 +1763,28 @@ const runs: Record<string, FixtureRun> = {
     // The 9 findings still open are decisions, and M. Bui is the actor who
     // signs decisions on this ledger (P. Ramanathan countersigns them).
     assignedTo: actors.bui.id,
+    // The run this one re-ran, and the owner who ran it. Both are the whole of
+    // TODO(schema-gap: run history) in one place: the contract has no id for
+    // an analysis and no field for the person who executed one.
+    previousRunId: PREVIOUS_RUN_ID,
+    ranByActorId: actors.shah.id,
+  },
+  [PREVIOUS_RUN_ID]: {
+    review: previousReview,
+    claims: previousAllClaims,
+    flags: previousFlags,
+    findings: previousFindings,
+    queryTraces: previousQueryTraces,
+    auditRecords: [],
+    stages: previousStages,
+    events: previousEvents,
+    // Not a seventh project — the same bundle, one run earlier. Superseded
+    // runs stay addressable by id and out of the portfolio, exactly as the
+    // degraded run does.
+    listed: false,
+    // Nobody owes this run a decision: the re-run replaced its output. An
+    // assignee here would put work in a reviewer's queue that no longer exists.
+    ranByActorId: actors.shah.id,
   },
   [DEGRADED_REVIEW_ID]: {
     review: degradedReview,
@@ -1255,6 +1797,10 @@ const runs: Record<string, FixtureRun> = {
     events: degradedEvents,
     // Not a seventh project — the same bundle in its failed state. See `listed`.
     listed: false,
+    // Executed by the same pipeline owner, and linked to no previous run: it
+    // is an ALTERNATE STATE of the demo run, not a third link in its chain, so
+    // it reports its own single run and no diff.
+    ranByActorId: actors.shah.id,
   },
 };
 
@@ -1767,6 +2313,493 @@ const SIGNING_PREFIX = "Signing as";
 const UNIDENTIFIED_SIGNER = "an unidentified reviewer";
 
 // ---------------------------------------------------------------------------
+// RUN HISTORY — the chain of runs over one bundle, and the diff across the
+// last two.
+//
+// EVERY NUMBER BELOW IS COUNTED. The previous run's content is authored (a
+// second run cannot be stored, so it cannot be loaded — see
+// TODO(schema-gap: run history) in lib/data/types.ts), and nothing else here
+// is: the diff counts come from comparing the two finding sets on every call,
+// the completion instant comes from adding the run's own stage durations to
+// its start instant, and the ledger's run count comes from the chain. Change a
+// finding in the fixture above and every one of them moves with it.
+// ---------------------------------------------------------------------------
+
+/** Why each fixture run happened. Fixture copy — the contract records no reason. */
+const RUN_TRIGGER_NOTES: Record<string, string> = {
+  [PREVIOUS_RUN_ID]: "First analysis of the Wrenfield bundle.",
+  [DEMO_REVIEW_ID]:
+    "Re-run after Ardenfell Engineering Advisors re-issued the engineering report.",
+  [DEGRADED_REVIEW_ID]:
+    "The same bundle analyzed with the live check refused on a rate limit.",
+};
+
+/** What a run with no note of its own says: the shape of the run, nothing more. */
+const RUN_TRIGGER_FALLBACK: Record<AnalysisRunTrigger, string> = {
+  initial: "Analysis run — no earlier run of this bundle is recorded.",
+  rerun: "Re-run of this bundle.",
+};
+
+const RUN_ENTRY_LABEL = "Analysis run";
+
+/**
+ * Why a run row carries no signature and no hash. Consequence first: the row
+ * cannot be a decision, and the reason is that a run signs nothing.
+ */
+const RUN_ENTRY_UNSIGNED =
+  "Not a decision — an analysis run signs nothing and closes no finding.";
+
+const RUN_OWNER_UNRECORDED = "Pipeline owner not recorded";
+
+const LAST_ANALYZED_LABEL = "Last analyzed";
+
+const LAST_ANALYZED_UNKNOWN = "This run recorded no completion time";
+
+const NO_ANALYSIS_RUNS = "No analysis runs recorded";
+
+/**
+ * The four states of the diff, in the words the queue and the ledger use.
+ * `resolved` is deliberately NOT "signed off": see ResolvedFinding in
+ * lib/data/types.ts for the distinction and why conflating them misreports
+ * what a reviewer did.
+ */
+const CHANGE_LABEL: Record<FindingRunChangeId, string> = {
+  new: "New since the last run",
+  unchanged: "Unchanged since the last run",
+  changed: "Changed since the last run",
+  resolved: "Resolved between runs",
+};
+
+const CHANGE_SHORT_LABEL: Record<FindingRunChangeId, string> = {
+  new: "New",
+  unchanged: "Unchanged",
+  changed: "Changed",
+  resolved: "Resolved",
+};
+
+/**
+ * Verdict wording for the diff's own change line — the only place this layer
+ * renders a verdict, and it exists so a change line never shows a reader the
+ * raw id "review_required". Component-side verdict labels pair their wording
+ * with a color token and stay where they are.
+ */
+const DIFF_VERDICT_LABEL: Record<ClaimVerdict, string> = {
+  conflicting: "conflicting",
+  stale: "stale",
+  corroborated: "corroborated",
+  consistent: "consistent",
+  review_required: "review required",
+  unverified: "unverified",
+};
+
+const RESOLVED_BY_RERUN =
+  "Resolved by the re-run — no reviewer signed it, and no decision closed it.";
+
+const RESOLVED_AFTER_SIGNATURE =
+  "Signed on the previous run, and no longer reported by this one — two separate events, both recorded.";
+
+const SUPERSEDED_EVIDENCE =
+  "Cites a superseded revision — this build holds the current documents only, so the excerpt is the record.";
+
+/**
+ * What a finding SAYS, as one comparable string: its verdict, its materiality,
+ * its queue label, and the values it puts on screen.
+ *
+ * `status` is deliberately absent, and so is every timestamp. Status moves
+ * when a HUMAN SIGNS — folding it in here would report a reviewer's decision
+ * as something the pipeline found, and the re-check time of a live source is
+ * not a change in what the finding says either.
+ */
+function findingValues(finding: Finding): string {
+  switch (finding.verdict) {
+    case "conflicting":
+      return `${finding.flag.claimA.value} vs ${finding.flag.claimB.value}`;
+    case "stale":
+      return `${finding.flag.claim.value} vs ${finding.flag.liveValue}`;
+    default:
+      return finding.claim.value;
+  }
+}
+
+function findingSignature(finding: Finding): string {
+  return [
+    finding.verdict,
+    finding.materiality,
+    finding.label,
+    findingValues(finding),
+  ].join(" — ");
+}
+
+/** What moved, in the two findings' own words. Undefined when nothing did. */
+function changeDetail(previous: Finding, current: Finding): string | undefined {
+  const moves: string[] = [];
+  if (previous.verdict !== current.verdict) {
+    moves.push(
+      `${DIFF_VERDICT_LABEL[previous.verdict]} → ${DIFF_VERDICT_LABEL[current.verdict]}`,
+    );
+  }
+  if (previous.materiality !== current.materiality) {
+    moves.push(
+      `materiality ${previous.materiality} → ${current.materiality}`,
+    );
+  }
+  const previousValue = findingValues(previous);
+  const currentValue = findingValues(current);
+  if (previousValue !== currentValue) {
+    moves.push(`${previousValue} → ${currentValue}`);
+  }
+  if (moves.length === 0) return undefined;
+  return `${current.label}: ${joinSegments(moves)}`;
+}
+
+/**
+ * When a run finished: its start instant plus every stage duration it reported.
+ *
+ * DERIVED, so the completion instant and the pipeline rail can never disagree.
+ * Undefined when the run reported no stages, or any stage reported no
+ * duration — a run that never said how long it took has no completion instant,
+ * and dating the record with a guess is worse than leaving the line off.
+ */
+function runCompletedAt(run: FixtureRun): string | undefined {
+  const started = Date.parse(run.review.createdAt);
+  if (Number.isNaN(started) || run.stages.length === 0) return undefined;
+  let elapsedMs = 0;
+  for (const stage of run.stages) {
+    if (stage.durationMs === undefined) return undefined;
+    elapsedMs += stage.durationMs;
+  }
+  return new Date(started + elapsedMs).toISOString();
+}
+
+/**
+ * The chain of runs ending at `reviewId`, oldest first.
+ *
+ * Walks `previousRunId` backwards. The `seen` guard is not defensive
+ * decoration: two runs pointing at each other would hang the render, and a
+ * chain is a claim about history that has to terminate.
+ */
+function runChain(reviewId: string): { id: string; run: FixtureRun }[] {
+  const chain: { id: string; run: FixtureRun }[] = [];
+  const seen = new Set<string>();
+  let id: string | undefined = reviewId;
+  while (id !== undefined && !seen.has(id)) {
+    seen.add(id);
+    const run = resolveRun(id);
+    if (!run) break;
+    chain.unshift({ id, run });
+    id = run.previousRunId;
+  }
+  return chain;
+}
+
+function buildAnalysisRun(
+  id: string,
+  run: FixtureRun,
+  ordinal: number,
+  total: number,
+): AnalysisRun {
+  const trigger: AnalysisRunTrigger =
+    run.previousRunId === undefined ? "initial" : "rerun";
+  const completedAt = runCompletedAt(run);
+  return {
+    id,
+    ordinal,
+    label: `Run ${ordinal} of ${total}`,
+    trigger,
+    triggerNote: RUN_TRIGGER_NOTES[id] ?? RUN_TRIGGER_FALLBACK[trigger],
+    startedAt: run.review.createdAt,
+    ...(completedAt ? { completedAt } : {}),
+    failed: run.stages.some((stage) => stage.state === "failed"),
+    ...(run.ranByActorId ? { owner: getActor(run.ranByActorId) } : {}),
+    findingCount: run.findings.length,
+    claimCount: run.claims.length,
+    documentCount: run.review.documents.length,
+    ...(run.previousRunId ? { previousRunId: run.previousRunId } : {}),
+  };
+}
+
+/**
+ * THE DIFF — computed by comparing two runs' finding sets, never authored.
+ *
+ * Findings are paired BY ID, because a finding id names what the finding is
+ * about (the expansion cost conflict, the module design assumption) and
+ * survives a re-analysis of the same subject. Paired findings are then compared
+ * by what they SAY (findingSignature): same words, `unchanged`; different
+ * words, `changed`, with a line naming the move. Unpaired findings fall to the
+ * two ends: only in the current run is `new`, only in the previous run is
+ * `resolved`.
+ */
+function buildRunDiff(
+  previousId: string,
+  previousRun: FixtureRun,
+  currentId: string,
+  currentRun: FixtureRun,
+): RunDiff {
+  const previousById = new Map(previousRun.findings.map((f) => [f.id, f]));
+  const currentIds = new Set(currentRun.findings.map((f) => f.id));
+
+  const changes: FindingRunChange[] = [];
+  let newCount = 0;
+  let unchangedCount = 0;
+  let changedCount = 0;
+
+  for (const finding of currentRun.findings) {
+    const before = previousById.get(finding.id);
+    if (!before) {
+      newCount += 1;
+      changes.push({
+        findingId: finding.id,
+        id: "new",
+        label: CHANGE_LABEL.new,
+        shortLabel: CHANGE_SHORT_LABEL.new,
+      });
+      continue;
+    }
+    const detail =
+      findingSignature(before) === findingSignature(finding)
+        ? undefined
+        : changeDetail(before, finding);
+    if (detail === undefined) {
+      unchangedCount += 1;
+      changes.push({
+        findingId: finding.id,
+        id: "unchanged",
+        label: CHANGE_LABEL.unchanged,
+        shortLabel: CHANGE_SHORT_LABEL.unchanged,
+      });
+    } else {
+      changedCount += 1;
+      changes.push({
+        findingId: finding.id,
+        id: "changed",
+        label: CHANGE_LABEL.changed,
+        shortLabel: CHANGE_SHORT_LABEL.changed,
+        detail,
+      });
+    }
+  }
+
+  // Findings the previous run reported and this one does not. Whether a
+  // reviewer had signed one is read off THAT run's own ledger — a decision and
+  // a disappearance are different events, and the note says which happened.
+  const currentDocumentIds = new Set(
+    currentRun.review.documents.map((doc) => doc.id),
+  );
+  const resolved: ResolvedFinding[] = [];
+  for (const finding of previousRun.findings) {
+    if (currentIds.has(finding.id)) continue;
+    const signedOnPreviousRun = previousRun.auditRecords.some(
+      (record) =>
+        record.flagId === finding.id && record.countersigns === undefined,
+    );
+    const citedDocumentIds =
+      finding.verdict === "conflicting"
+        ? [finding.sourceA.documentId, finding.sourceB.documentId]
+        : [finding.source.documentId];
+    const superseded = citedDocumentIds.some(
+      (documentId) => !currentDocumentIds.has(documentId),
+    );
+    resolved.push({
+      finding,
+      label: CHANGE_LABEL.resolved,
+      signedOnPreviousRun,
+      note: signedOnPreviousRun ? RESOLVED_AFTER_SIGNATURE : RESOLVED_BY_RERUN,
+      ...(superseded ? { supersededNote: SUPERSEDED_EVIDENCE } : {}),
+    });
+    changes.push({
+      findingId: finding.id,
+      id: "resolved",
+      label: CHANGE_LABEL.resolved,
+      shortLabel: CHANGE_SHORT_LABEL.resolved,
+    });
+  }
+
+  const carriedCount = unchangedCount + changedCount;
+  const previousScore = previousRun.review.trustScore.blended;
+  const currentScore = currentRun.review.trustScore.blended;
+  const trust =
+    previousScore === undefined || currentScore === undefined
+      ? undefined
+      : {
+          previous: normalizeConfidence(previousScore),
+          current: normalizeConfidence(currentScore),
+          // NOT normalizeConfidence(): it clamps to [0, 1], which would report
+          // every fall in trust as no change at all. A delta is a difference,
+          // not a reading, so it is scaled into the same 0–1 domain and left
+          // signed.
+          delta: (currentScore - previousScore) / 100,
+          direction:
+            currentScore > previousScore
+              ? ("up" as const)
+              : currentScore < previousScore
+                ? ("down" as const)
+                : ("flat" as const),
+          text: `Trust score ${previousScore} → ${currentScore}`,
+        };
+
+  return {
+    previousRunId: previousId,
+    currentRunId: currentId,
+    newCount,
+    unchangedCount,
+    changedCount,
+    carriedCount,
+    resolvedCount: resolved.length,
+    previousFindingCount: previousRun.findings.length,
+    currentFindingCount: currentRun.findings.length,
+    text: joinSegments([
+      `${newCount} new`,
+      `${resolved.length} resolved`,
+      `${changedCount} changed`,
+      `${unchangedCount} unchanged`,
+    ]),
+    changes,
+    resolved,
+    ...(trust ? { trust } : {}),
+  };
+}
+
+/**
+ * Every run of one bundle, and the diff across the last two.
+ *
+ * Undefined for an id with no run — an unknown review has no history, and
+ * serving the demo run's history under another id is the failure this layer
+ * exists to prevent.
+ */
+export function getRunHistory(
+  reviewId: string = DEMO_REVIEW_ID,
+): RunHistory | undefined {
+  const chain = runChain(reviewId);
+  if (chain.length === 0) return undefined;
+
+  const runs = chain.map((entry, index) =>
+    buildAnalysisRun(entry.id, entry.run, index + 1, chain.length),
+  );
+  const current = runs[runs.length - 1];
+  const previous = runs.length > 1 ? runs[runs.length - 2] : undefined;
+  const previousEntry = chain[chain.length - 2];
+  const currentEntry = chain[chain.length - 1];
+
+  return {
+    reviewId,
+    runs,
+    current,
+    ...(previous ? { previous } : {}),
+    runCount: runs.length,
+    text: `${plural(runs.length, "analysis run", "analysis runs")} of this bundle`,
+    ...(current.completedAt ? { lastAnalyzedAt: current.completedAt } : {}),
+    lastAnalyzedLabel: current.completedAt
+      ? LAST_ANALYZED_LABEL
+      : LAST_ANALYZED_UNKNOWN,
+    ...(previousEntry
+      ? {
+          diff: buildRunDiff(
+            previousEntry.id,
+            previousEntry.run,
+            currentEntry.id,
+            currentEntry.run,
+          ),
+        }
+      : {}),
+  };
+}
+
+/**
+ * The diff between this run and the one it re-ran, or undefined when it re-ran
+ * nothing. A first run has nothing to compare against, and "0 new · 0 resolved"
+ * would report a comparison that never happened.
+ */
+export function getRunDiff(reviewId: string = DEMO_REVIEW_ID): RunDiff | undefined {
+  return getRunHistory(reviewId)?.diff;
+}
+
+/**
+ * Where one finding sits in the diff — new, unchanged, changed, or resolved.
+ *
+ * Undefined when the run has no previous run (nothing to compare) or when the
+ * id is in neither run's finding set. A finding with no comparison reports
+ * nothing rather than defaulting to "unchanged", which would claim a
+ * comparison nobody ran.
+ */
+export function getFindingRunChange(
+  findingId: string,
+  reviewId: string = DEMO_REVIEW_ID,
+): FindingRunChange | undefined {
+  return getRunDiff(reviewId)?.changes.find(
+    (change) => change.findingId === findingId,
+  );
+}
+
+/**
+ * When the current run finished — an ABSOLUTE ISO instant, derived from the
+ * run's own stage durations. The caller renders it with formatUtc from
+ * lib/format; nothing here formats it, and nothing anywhere turns it into
+ * "6 days ago": the fixtures are fixed in time, so an elapsed figure would be
+ * false, and one computed at render would differ between the server pass and
+ * the client pass.
+ */
+export function getLastAnalyzedAt(
+  reviewId: string = DEMO_REVIEW_ID,
+): string | undefined {
+  return getRunHistory(reviewId)?.lastAnalyzedAt;
+}
+
+/**
+ * THE LEDGER'S ROWS — signed decisions AND analysis runs, in one ordered list,
+ * told apart by `kind` and never merged into one count.
+ *
+ * A run row carries no signature, no hash and no decision, because a run makes
+ * none: the Pipeline owner who executed it signs nothing. That is why an
+ * analysis run cannot be written as a ReviewRecord and why LedgerSummary counts
+ * runs separately from decisions — see TODO(schema-gap: run history), point 3.
+ *
+ * Rows are ordered by when they happened: a run by the instant it finished (or,
+ * failing that, the instant it started), a decision by the instant it was
+ * signed. On the demo review that puts both runs before the four signatures,
+ * which is the true order — every decision on the ledger was taken against the
+ * output of the second run.
+ */
+export function getLedgerEntries(
+  reviewId: string = DEMO_REVIEW_ID,
+): readonly LedgerEntry[] {
+  const entries: LedgerEntry[] = [];
+
+  for (const record of getAuditRecords(reviewId)) {
+    const actor = getRecordActor(record);
+    entries.push({
+      kind: "decision",
+      at: record.signedAt,
+      ...(actor ? { actor } : {}),
+      byline: actor ? joinSegments([actor.name, actor.role]) : record.reviewer,
+      record,
+      countersignature: record.countersigns !== undefined,
+    });
+  }
+
+  for (const run of getRunHistory(reviewId)?.runs ?? []) {
+    entries.push({
+      kind: "run",
+      at: run.completedAt ?? run.startedAt,
+      ...(run.owner ? { actor: run.owner } : {}),
+      byline: run.owner
+        ? joinSegments([run.owner.name, run.owner.role])
+        : RUN_OWNER_UNRECORDED,
+      run,
+      label: RUN_ENTRY_LABEL,
+      summary: run.triggerNote,
+      outcomeText: joinSegments([
+        plural(run.findingCount, "finding", "findings"),
+        plural(run.claimCount, "claim", "claims"),
+        plural(run.documentCount, "document", "documents"),
+      ]),
+      unsignedNote: RUN_ENTRY_UNSIGNED,
+    });
+  }
+
+  return entries.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
+// ---------------------------------------------------------------------------
 // Audit ledger summary
 // ---------------------------------------------------------------------------
 
@@ -1778,11 +2811,37 @@ const UNIDENTIFIED_SIGNER = "an unidentified reviewer";
  * no copy edit. The demo run reads "4 decisions across 2 reviewers"; the
  * degraded run signed nothing, so it reads "No decisions signed" and its
  * counts are zero.
+ *
+ * ANALYSIS RUNS ARE COUNTED APART, IN THEIR OWN SENTENCE. The demo review's
+ * ledger now holds two run rows as well as its four decision rows, and
+ * `decisionCount` still reads 4: a run signs nothing and closes no finding, so
+ * counting one as a decision would credit the Pipeline owner with work nobody
+ * did. `runCount` and `runText` report the runs, `entryCount` reports the rows
+ * on the page, and every one of the three is counted off getLedgerEntries().
  */
 export function getLedgerSummary(
   reviewId: string = DEMO_REVIEW_ID,
 ): LedgerSummary {
   const records = getAuditRecords(reviewId);
+  const runEntries = getLedgerEntries(reviewId).filter(
+    (entry) => entry.kind === "run",
+  );
+  const runOwners: Actor[] = [];
+  for (const entry of runEntries) {
+    const owner = entry.actor;
+    if (owner && !runOwners.some((known) => known.id === owner.id)) {
+      runOwners.push(owner);
+    }
+  }
+  const runLabel = plural(runEntries.length, "analysis run", "analysis runs");
+  const runText =
+    runEntries.length === 0
+      ? NO_ANALYSIS_RUNS
+      : runOwners.length === 1
+        ? `${runLabel} by ${runOwners[0].name}`
+        : runOwners.length === 0
+          ? runLabel
+          : `${runLabel} across ${plural(runOwners.length, "pipeline owner", "pipeline owners")}`;
   const signatories: Actor[] = [];
   for (const record of records) {
     const actor = getRecordActor(record);
@@ -1809,6 +2868,9 @@ export function getLedgerSummary(
           )}`,
     countersignaturePolicy: COUNTERSIGNATURE_POLICY,
     retentionLine: complianceCopy.auditRetention,
+    runCount: runEntries.length,
+    runText,
+    entryCount: records.length + runEntries.length,
   };
 }
 

@@ -32,16 +32,40 @@
  * Both branches render the same one-row shell, so the header keeps its height
  * across every route and nothing below it reflows on navigation. The page
  * still never scrolls: the bar is shrink-0 and the columns beneath it scroll.
+ *
+ * WHERE "LAST ANALYZED" GOES, AND WHERE IT DELIBERATELY DOES NOT.
+ *
+ * The instant a run finished belongs to the screen that shows the run. This
+ * bar therefore carries it on exactly the route it already carries a project
+ * on — `/reviews/[id]/review`, the one review screen with no heading of its
+ * own — and the rule above is NOT widened to do it. Extending ProjectBar to
+ * the other routes to make room for a timestamp would put a project title
+ * above Team, Reports and Verification rules again, which is the bug this
+ * component exists to fix; a workspace screen would suddenly claim a project
+ * in order to date one.
+ *
+ * The analysis screen (`/reviews/[id]`) needs the same fact and still does not
+ * get this bar: it titles itself, so `AnalysisSummary` prints "Last analyzed"
+ * beneath its own h1, off the same `getRunHistory()` accessor. One fact, one
+ * data source, two screens that each already own a place to put it.
  */
 
 import { usePathname } from "next/navigation";
 import { APP_NAME, navRouteName } from "./AppNav";
 import ProjectBar, { WorkspaceBar } from "./ProjectBar";
-import { getReview } from "@/lib/data";
+import { getReview, getRunHistory } from "@/lib/data";
 
 /** The one path shape whose screen has no title of its own. */
 const REVIEWS_SEGMENT = "reviews";
 const REVIEW_SEGMENT = "review";
+
+/**
+ * `/reviews/{id}?state=analyzing` — the signal `/reviews/[id]` reads to open
+ * in its analyzing state and replay the recorded run. Spelled the same way the
+ * page and NewReviewComposer spell it.
+ */
+const STATE_PARAM = "state";
+const ANALYZING_STATE = "analyzing";
 
 /**
  * The review id in `/reviews/{id}/review`, or undefined on any other path.
@@ -70,7 +94,23 @@ export default function ContextBar() {
   // screen from the nav row that reached it.
   const review = reviewId === undefined ? undefined : getReview(reviewId);
 
-  if (review) return <ProjectBar label={review.title} />;
+  // The run behind the review: when it last finished, and whether there is a
+  // recorded run at all. Undefined for a review the fixture registry does not
+  // hold a run for — the bar then names the project and claims nothing about
+  // an analysis, rather than dating one it cannot see.
+  const history = review === undefined ? undefined : getRunHistory(review.id);
+
+  if (review)
+    return (
+      <ProjectBar
+        label={review.title}
+        history={history}
+        // The replay this app really performs — the same destination
+        // AnalysisSummary's "Replay analysis" reaches. Not a re-run: see the
+        // note on REPLAY_LABEL in ProjectBar.tsx.
+        replayHref={`/${REVIEWS_SEGMENT}/${encodeURIComponent(review.id)}?${STATE_PARAM}=${ANALYZING_STATE}`}
+      />
+    );
 
   // A route the nav does not name falls back to the workspace's own name
   // rather than inventing a screen title it does not know.

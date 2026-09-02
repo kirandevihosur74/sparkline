@@ -112,6 +112,25 @@ export type {
   ShortcutGroup,
   ShortcutSheet,
   RunData,
+  // Run history — a second analysis run of the same bundle, and the diff.
+  // The previous run's CONTENT is authored in fixtures.ts (a second run cannot
+  // be stored, so it cannot be loaded); every count over it — the diff totals,
+  // each finding's change, the completion instant, the ledger's run count — is
+  // derived by comparing the two runs (TODO(schema-gap: run history)).
+  AnalysisRunTrigger,
+  AnalysisRun,
+  FindingRunChangeId,
+  FindingRunChange,
+  ResolvedFinding,
+  RunTrustDelta,
+  RunDiff,
+  RunHistory,
+  // Ledger entries — a signed decision and an analysis run are different rows
+  // with different fields, so neither can be rendered or counted as the other
+  LedgerEntryKind,
+  DecisionLedgerEntry,
+  RunLedgerEntry,
+  LedgerEntry,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
@@ -119,6 +138,7 @@ export { normalizeConfidence } from "./types";
 export {
   DEMO_REVIEW_ID,
   DEGRADED_REVIEW_ID,
+  PREVIOUS_RUN_ID,
   getReview,
   getDocuments,
   getClaims,
@@ -163,4 +183,15 @@ export {
   getShortcutGroups,
   getShortcutSheet,
   getFixtureRun,
+  // Run history and the diff between two runs of one bundle. getRunDiff is
+  // undefined for a run that re-ran nothing; getFindingRunChange is undefined
+  // for a finding neither run reported — an absent comparison says so rather
+  // than defaulting to "unchanged"
+  getRunHistory,
+  getRunDiff,
+  getFindingRunChange,
+  getLastAnalyzedAt,
+  // The ledger's rows: signed decisions AND analysis runs, ordered by when
+  // they happened and told apart by `kind`
+  getLedgerEntries,
 } from "./fixtures";

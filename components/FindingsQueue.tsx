@@ -38,18 +38,32 @@
  * says why — a 0 there would be a claim about the reviewer's workload that
  * nothing in the run supports.
  *
+ * THE RUN DIFF. Cards mark the findings this run reported and the previous one
+ * did not, and the header says how many of the rows on screen carry that mark.
+ * Both come from getRunDiff() for THE RUN THIS QUEUE IS SHOWING, resolved from
+ * the route the same way ContextBar resolves the review it titles — never from
+ * the accessor's default. That default is DEMO_REVIEW_ID, and the degraded run
+ * reuses the demo run's finding ids, so letting it stand would print "New since
+ * the last run" on two degraded cards against a comparison that run never had.
+ * When no comparison resolves — a first run, a live run, a queue rendered off
+ * this route — the header says so instead of leaving the cards' silence to be
+ * read as "nothing changed".
+ *
  * Client component: it owns the selection and filter interactions.
  */
 
+import { usePathname } from "next/navigation";
+
 import CoverageBar from "./CoverageBar";
-import FindingCard from "./FindingCard";
-import { getFindingsFooter } from "@/lib/data";
+import FindingCard, { isNewSinceLastRun } from "./FindingCard";
+import { getFindingsFooter, getRunDiff } from "@/lib/data";
 import type {
   CoverageBreakdown,
   Finding,
   FindingQueue,
   FindingQueueFilter,
   FindingQueueFilterId,
+  FindingRunChange,
   FindingsFooter,
   UnresolvedFindingQueueFilter,
 } from "@/lib/data";
@@ -88,6 +102,27 @@ const FILTER_COPY = {
   /** The same fact, said in the space the coverage key would have used. */
   hiddenCoverage: (active: string) =>
     `Nothing to segment: ${active} leaves no findings on screen.`,
+} as const;
+
+/**
+ * The diff line's words. Same division as the two blocks above: the nouns are
+ * the design system's, the NUMBER is counted off the rows this queue is
+ * rendering — not off the run — so the line describes the list under it even
+ * when a filter is hiding most of it.
+ *
+ * The no-comparison sentence says exactly what is missing (a comparison) and
+ * not what would be a guess (that no previous run exists): getRunDiff also
+ * returns nothing for a run this client cannot resolve, and "this run is the
+ * first" would be a claim about history in that case.
+ */
+const CHANGE_COPY = {
+  count: (count: number) =>
+    count === 1
+      ? "1 finding here is new since the last run"
+      : `${count} findings here are new since the last run`,
+  none: "Nothing here is new since the last run",
+  uncompared:
+    "Nothing here is marked new: this run records no comparison with a previous run.",
 } as const;
 
 export interface FindingsQueueProps {
@@ -150,6 +185,15 @@ export default function FindingsQueue({
   // The one filter this run cannot apply, if there is one.
   const unavailableFilter = unresolvedFilter(queue);
 
+  // The diff for the run on screen, keyed by finding id. Undefined values are
+  // the honest answer for a finding no comparison covers, and the map is empty
+  // when there is no comparison at all — no card is marked either way.
+  const pathname = usePathname();
+  const changes = runChanges(pathname);
+  const newCount = findings.filter((finding) =>
+    isNewSinceLastRun(changes.get(finding.id)),
+  ).length;
+
   // Live, off the session breakdown: "9 open · 2 resolved · 11 findings".
   // Every number is counted from the findings this queue is rendering.
   const scaleLine = [
@@ -170,6 +214,23 @@ export default function FindingsQueue({
           {/* The scale line replaces the bare open count that sat top-right:
               it says the same thing and three more, so both would repeat. */}
           <p className="tabular text-caption text-ink-3">{scaleLine}</p>
+
+          {/* One line about the previous run, and only about what is listed.
+              It is not the analysis screen's change summary in miniature: no
+              resolved count (the scale line above already spends the word
+              "resolved" on signed decisions), no changed count, no trust
+              delta — just the mark the cards beneath it carry, counted with
+              the same predicate that draws it. Suppressed while the list is
+              empty, where the empty state is the answer instead. */}
+          {findings.length > 0 ? (
+            <p className="tabular text-caption text-ink-3">
+              {changes.size === 0
+                ? CHANGE_COPY.uncompared
+                : newCount === 0
+                  ? CHANGE_COPY.none
+                  : CHANGE_COPY.count(newCount)}
+            </p>
+          ) : null}
         </div>
 
         <CoverageBar
@@ -230,6 +291,7 @@ export default function FindingsQueue({
             <FindingCard
               key={finding.id}
               finding={finding}
+              change={changes.get(finding.id)}
               selected={finding.id === selectedId}
               onSelect={onSelect}
             />
@@ -312,6 +374,46 @@ function filterFor(
   filterId: FindingQueueFilterId,
 ): FindingQueueFilter {
   return queue.filters.find((filter) => filter.id === filterId) ?? queue.filters[0];
+}
+
+// ---------------------------------------------------------------------------
+// The run this queue is showing
+// ---------------------------------------------------------------------------
+
+const REVIEWS_SEGMENT = "reviews";
+const REVIEW_SEGMENT = "review";
+
+/**
+ * The review id in `/reviews/{id}/review`, or undefined on any other path.
+ *
+ * Duplicated from ContextBar, where the same three-segment match is
+ * module-private, and deliberately so: both components answer "which review is
+ * on screen" from the route because neither is passed it, and a shared helper
+ * would be a data-layer function that reads a URL. Matching on segments rather
+ * than a prefix keeps `/reviews/{id}` and `/reviews/{id}/audit` out of it.
+ */
+function reviewIdInPath(pathname: string): string | undefined {
+  const segments = pathname.split("/").filter(Boolean);
+  return segments.length === 3 &&
+    segments[0] === REVIEWS_SEGMENT &&
+    segments[2] === REVIEW_SEGMENT
+    ? segments[1]
+    : undefined;
+}
+
+/**
+ * Every finding's place in the diff for the run at this path, by id.
+ *
+ * NO FALLBACK, for the reason /reviews/[id]/review and ContextBar have none: an
+ * id this client cannot resolve is not the demo run, and the demo run's diff
+ * under another run's findings would mark cards new against a comparison that
+ * never happened. An unresolvable path returns an empty map, which the header
+ * reports as an absent comparison rather than as an absence of change.
+ */
+function runChanges(pathname: string): Map<string, FindingRunChange> {
+  const reviewId = reviewIdInPath(pathname);
+  const diff = reviewId === undefined ? undefined : getRunDiff(reviewId);
+  return new Map((diff?.changes ?? []).map((change) => [change.findingId, change]));
 }
 
 /** The filter this run cannot apply, if there is one. */

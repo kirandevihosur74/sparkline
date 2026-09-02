@@ -738,9 +738,16 @@ export interface Countersignature {
  *
  * Every number here is DERIVED from getAuditRecords() on the run — never a
  * literal, so a fifth row changes the strip without anyone editing copy.
+ *
+ * ANALYSIS RUNS ARE COUNTED SEPARATELY AND SAID SEPARATELY. `decisionCount`
+ * and `text` count SIGNED DECISIONS and nothing else, exactly as they always
+ * have; a run that reached the ledger is a pipeline event (RunLedgerEntry) and
+ * is counted by `runCount` in its own sentence. A run absorbed into the
+ * decision count would report work nobody did: the Pipeline owner signed
+ * nothing, and "5 decisions" would say they did.
  */
 export interface LedgerSummary {
-  /** Rows on the ledger, decisions and countersignatures alike. */
+  /** Signed rows on the ledger, decisions and countersignatures alike. */
   decisionCount: number;
   /** How many of those rows endorse another actor's decision. */
   countersignatureCount: number;
@@ -750,6 +757,15 @@ export interface LedgerSummary {
   signatories: readonly Actor[];
   /** "4 decisions across 2 reviewers", or "No decisions signed" at zero. */
   text: string;
+  /**
+   * Analysis runs recorded on this ledger — counted off the run chain, and
+   * counted NOWHERE in `decisionCount`.
+   */
+  runCount: number;
+  /** "2 analysis runs by K. Shah", or "No analysis runs recorded" at zero. */
+  runText: string;
+  /** Rows the ledger renders in total: decisions plus runs. */
+  entryCount: number;
   /** Why a second signature exists at all — workspace policy, fixture copy. */
   countersignaturePolicy: string;
   /** Retention/immutability/export footer — fixture copy. */
@@ -1259,6 +1275,315 @@ export interface ShortcutSheet {
 }
 
 // ---------------------------------------------------------------------------
+// RUN HISTORY — a second analysis run of the same bundle, and the diff
+//
+// Documents get revised, the bundle is re-run, and the system reports WHAT
+// CHANGED. That is the whole of this section: a chain of runs over one bundle,
+// a comparison of two adjacent runs' finding sets, and the run itself as an
+// entry in the audit record.
+//
+// TODO(schema-gap: run history): the backend has NO run history at all.
+// lib/types.ts models the artifacts one analysis produces (ExtractedClaim,
+// Flag, TrustScore, ReviewRecord) and nothing about WHICH analysis produced
+// them, so there is no way to hold two runs of the same bundle at once, let
+// alone compare them. Closing this needs three things the contract lacks:
+//
+//   1. A RUN ID PER ANALYSIS — a Run entity with its own id, the instant it
+//      started, the instant it finished, who executed it, and a link to the
+//      run it re-ran. AnalysisResult.analyzedAt is the only trace of a run in
+//      the contract today, and a bare timestamp cannot be referenced,
+//      superseded or diffed.
+//   2. FINDINGS KEYED TO THE RUN THAT PRODUCED THEM — `runId` on the flag /
+//      claim records, plus a stable per-finding identity that survives across
+//      runs, so "the same finding, one run later" is expressible. Without
+//      both, a second run can only be stored by overwriting the first, which
+//      is exactly why this build has one point in time and no history.
+//   3. A NON-DECISION ENTRY TYPE FOR THE LEDGER — ReviewRecord models a SIGNED
+//      HUMAN DECISION (`reviewer`, `decision`, `signedAt`) and nothing else.
+//      An analysis run is a pipeline event: it signs nothing, decides nothing,
+//      and must never be counted as a decision. Recording it today would mean
+//      writing a fake `decision` onto a ReviewRecord, so the ledger entry
+//      union below is a frontend-only view-model until the backend has an
+//      entry type for events that are not decisions.
+//
+// Everything in this section is therefore a view-model. The CONTENT of the
+// previous run is authored in fixtures.ts (a second run cannot be stored, so
+// it cannot be loaded); every NUMBER derived from it — the diff counts, the
+// per-finding change, the completion instant, the ledger's run count — is
+// COMPUTED by comparing the two runs, never typed in.
+// ---------------------------------------------------------------------------
+
+/**
+ * Why an analysis run happened.
+ *
+ * `initial` means NO PREDECESSOR IS RECORDED for this run — the first analysis
+ * of a bundle, or a run whose chain the contract cannot express. `rerun` means
+ * it re-ran a run this build actually holds. The distinction is what the build
+ * knows, not what it assumes.
+ */
+export type AnalysisRunTrigger = "initial" | "rerun";
+
+/**
+ * One analysis run of one document bundle.
+ *
+ * `completedAt` is DERIVED, not stored: it is the run's start instant plus
+ * every stage's own reported duration, so it cannot drift from the pipeline
+ * rail above it. It is an ABSOLUTE ISO instant and stays one all the way to
+ * the component — the consumer renders it with formatUtc from lib/format.
+ * Nothing here computes an elapsed or relative time: the fixtures are fixed in
+ * time, so "6 days ago" would be false, and a relative time computed at render
+ * differs between the server pass and the client pass.
+ */
+export interface AnalysisRun {
+  /** The id this run is addressable under — the same id every accessor takes. */
+  id: string;
+  /** 1-based position in the bundle's run chain, oldest first. */
+  ordinal: number;
+  /** "Run 2 of 2" — derived from `ordinal` and the length of the chain. */
+  label: string;
+  trigger: AnalysisRunTrigger;
+  /** Why this run happened. Fixture copy — see the schema-gap note above. */
+  triggerNote: string;
+  /** ISO — the run's own start instant (the review's createdAt). */
+  startedAt: string;
+  /**
+   * ISO — `startedAt` plus every stage duration this run reported. Absent when
+   * a stage reported none: a run that never said how long it took has no
+   * completion instant, and inventing one would date the record wrongly.
+   */
+  completedAt?: string;
+  /** TRUE when a stage failed — the run ended, but not cleanly. */
+  failed: boolean;
+  /**
+   * Who executed the run. A Pipeline owner signs NOTHING (see ActorRole);
+   * undefined when the run names nobody, which is a live run's honest state —
+   * the contract carries no owner for it.
+   */
+  owner?: Actor;
+  /** Counted off the run: findings it produced. */
+  findingCount: number;
+  /** Counted off the run: claims it extracted. */
+  claimCount: number;
+  /** Counted off the run: documents it read. */
+  documentCount: number;
+  /** The run this one re-ran, when there is one. */
+  previousRunId?: string;
+}
+
+/**
+ * How one finding compares against the previous run of the same bundle.
+ *
+ * FOUR states, and the fourth is the reason the other three can be trusted:
+ *
+ *   - `new`       — this run reports it and the previous run did not.
+ *   - `unchanged` — both runs report it and it SAYS the same thing.
+ *   - `changed`   — both runs report it and what it says moved (a value, a
+ *                   verdict, a materiality). The `detail` line names what.
+ *   - `resolved`  — the previous run reported it and this run does not.
+ *
+ * WHAT "SAYS THE SAME THING" MEANS, exactly: the comparison reads a finding's
+ * verdict, its materiality, its label and the values it puts on screen. It
+ * deliberately does NOT read `status`, and does not read the timestamp of the
+ * live check behind it. `status` moves when a HUMAN SIGNS, and a signature is
+ * not a re-analysis: folding one into this comparison would report a
+ * reviewer's decision as a change the pipeline found, which is the single
+ * worst thing this diff could get wrong.
+ */
+export type FindingRunChangeId = "new" | "unchanged" | "changed" | "resolved";
+
+/** One finding's place in the diff. Derived by comparing the two runs. */
+export interface FindingRunChange {
+  findingId: string;
+  id: FindingRunChangeId;
+  /** Full sentence-case label: "New since the last run". */
+  label: string;
+  /** Chip-length label: "New", "Unchanged", "Changed", "Resolved". */
+  shortLabel: string;
+  /**
+   * What moved, e.g. "Module design assumption: Tier-1 430 W modules →
+   * Tier-1 440 W modules". Present ONLY on `changed`, where it is built from
+   * the two runs' own values — never authored.
+   */
+  detail?: string;
+}
+
+/**
+ * A finding the previous run reported and this run does not.
+ *
+ * RESOLVED BETWEEN RUNS IS NOT SIGNED OFF, and the two must never be read as
+ * one. A signed-off finding was decided by a person, who put their name on it;
+ * a resolved-between-runs finding was decided by nobody — the re-run simply
+ * stopped reporting it, because the document it came from was revised. One is
+ * a decision in the ledger, the other is an absence in the output.
+ * `signedOnPreviousRun` says which happened here, derived from the previous
+ * run's OWN ledger rather than assumed, so a finding that was both signed and
+ * then dropped reports both facts instead of hiding one.
+ */
+export interface ResolvedFinding {
+  /** The finding exactly as the previous run recorded it. */
+  finding: Finding;
+  /** "Resolved between runs" — the change label, repeated here for the row. */
+  label: string;
+  /**
+   * TRUE when the previous run's ledger holds a signed decision for this
+   * finding. FALSE means nobody ever signed it: the re-run closed it.
+   */
+  signedOnPreviousRun: boolean;
+  /**
+   * The distinction in words, derived from the flag above: "Resolved by the
+   * re-run — no reviewer signed it", or the signed variant.
+   */
+  note: string;
+  /**
+   * Why its evidence cannot be opened: the finding cites the superseded
+   * revision of a document, and this build holds only the current one. Absent
+   * when every document it cites is still in the current run.
+   */
+  supersededNote?: string;
+}
+
+/** The trust reading either side of the re-run. Both runs must have scored. */
+export interface RunTrustDelta {
+  /** Normalized 0–1, as every other confidence in this app. */
+  previous: number;
+  current: number;
+  /** current − previous, in the same 0–1 domain. */
+  delta: number;
+  direction: "up" | "down" | "flat";
+  /** "Trust score 68 → 72" — built from the two runs' own readings. */
+  text: string;
+}
+
+/**
+ * The diff between two adjacent runs of one bundle.
+ *
+ * EVERY COUNT HERE IS COUNTED — the finding sets of the two runs are compared
+ * on each call and the totals fall out of that comparison. None of them is
+ * authored, and `text` is assembled from them, so a fixture change that adds a
+ * finding moves the sentence with no copy edit. The two totals at the bottom
+ * are the arithmetic check a reader can run themselves: `currentFindingCount`
+ * is `newCount + carriedCount`, and `previousFindingCount` is
+ * `carriedCount + resolvedCount`.
+ */
+export interface RunDiff {
+  previousRunId: string;
+  currentRunId: string;
+  /** Reported by this run, not by the previous one. */
+  newCount: number;
+  /** Reported by both, saying the same thing. */
+  unchangedCount: number;
+  /** Reported by both, saying something different. */
+  changedCount: number;
+  /** unchanged + changed. */
+  carriedCount: number;
+  /** Reported by the previous run and not by this one. */
+  resolvedCount: number;
+  previousFindingCount: number;
+  currentFindingCount: number;
+  /** "2 new · 1 resolved · 1 changed · 8 unchanged". */
+  text: string;
+  /**
+   * One entry per finding on EITHER side of the comparison — this run's
+   * findings, plus the resolved ones the previous run reported.
+   */
+  changes: readonly FindingRunChange[];
+  /** The findings this run no longer reports, in the previous run's order. */
+  resolved: readonly ResolvedFinding[];
+  /** Present only when BOTH runs recorded a blended score. */
+  trust?: RunTrustDelta;
+}
+
+/**
+ * Every run of one bundle, and the diff across the last two.
+ *
+ * `diff` is absent when there is only one run — a first run has nothing to be
+ * compared against, and a "0 new · 0 resolved" line on it would imply a
+ * comparison that never happened.
+ */
+export interface RunHistory {
+  /** The review these runs belong to (the id of the current run). */
+  reviewId: string;
+  /** Oldest first. */
+  runs: readonly AnalysisRun[];
+  current: AnalysisRun;
+  previous?: AnalysisRun;
+  runCount: number;
+  /** "2 analysis runs of this bundle" — counted off `runs`. */
+  text: string;
+  /**
+   * ISO instant the CURRENT run finished — absolute, from the run's own
+   * stage durations. The consumer renders it with formatUtc; nothing in this
+   * layer formats it, and nothing anywhere turns it into an elapsed time.
+   */
+  lastAnalyzedAt?: string;
+  /**
+   * The words in front of that instant — "Last analyzed". When the instant is
+   * absent this field carries the say-so copy that replaces the whole line
+   * instead, so a component never renders a label with nothing after it.
+   *
+   * The label says WHEN the run ended, never that it ended well: a run with a
+   * failed stage still ended at an instant, and `current.failed` is the field
+   * that qualifies it.
+   */
+  lastAnalyzedLabel: string;
+  diff?: RunDiff;
+}
+
+// ---------------------------------------------------------------------------
+// The audit ledger's entries — decisions AND runs, told apart by type
+//
+// Part of TODO(schema-gap: run history) above, point 3: ReviewRecord models a
+// signed human decision and cannot express a pipeline event, so a run reaches
+// the ledger through this union instead of by being written as a fake
+// decision. The two members carry different fields on purpose — a decision has
+// a signature and a hash, a run has neither — so no consumer can render one as
+// the other, and no count can absorb one into the other.
+// ---------------------------------------------------------------------------
+
+export type LedgerEntryKind = "decision" | "run";
+
+interface LedgerEntryBase {
+  kind: LedgerEntryKind;
+  /** ISO instant the ledger orders this row by. */
+  at: string;
+  /** The actor behind the row, when the record names one. */
+  actor?: Actor;
+  /** "M. Bui · Reviewer", or the say-so copy when nobody is named. */
+  byline: string;
+}
+
+/** A signed human decision — the rows the ledger has always held. */
+export interface DecisionLedgerEntry extends LedgerEntryBase {
+  kind: "decision";
+  record: AuditRecord;
+  /** TRUE when the row endorses another actor's decision instead of making one. */
+  countersignature: boolean;
+}
+
+/**
+ * An analysis run — a PIPELINE EVENT, not a decision.
+ *
+ * It resolves no finding, carries no signature and no content hash, and is
+ * counted separately from decisions everywhere it is counted at all (see
+ * LedgerSummary.runCount). The Pipeline owner who executed it signs nothing:
+ * that is what the role means.
+ */
+export interface RunLedgerEntry extends LedgerEntryBase {
+  kind: "run";
+  run: AnalysisRun;
+  /** What this row says where a decision row says "Approved": "Analysis run". */
+  label: string;
+  /** The run's own trigger note — why it happened. */
+  summary: string;
+  /** What it produced, counted off it: "11 findings · 12 claims · 2 documents". */
+  outcomeText: string;
+  /** Why the signature and hash columns are empty on this row. */
+  unsignedNote: string;
+}
+
+export type LedgerEntry = DecisionLedgerEntry | RunLedgerEntry;
+
+// ---------------------------------------------------------------------------
 // One run, as the data layer holds it — the shape every accessor resolves
 // through. Fixture runs are authored in this shape; live runs are adapted into
 // it from a stored AnalysisResult (lib/data/adapt.ts).
@@ -1290,4 +1615,21 @@ export interface RunData {
    * than borrowing the last actor who touched it.
    */
   assignedTo?: ActorId;
+  /**
+   * The run this run re-ran — the previous analysis of the SAME bundle.
+   *
+   * OPTIONAL, and undefined means "this is the first run of this bundle", not
+   * "the link is missing": a first run has no predecessor, and getRunDiff()
+   * returns undefined for it rather than a diff against nothing. See
+   * TODO(schema-gap: run history) above — the backend has no Run entity, so
+   * this link exists only between two fixture runs.
+   */
+  previousRunId?: string;
+  /**
+   * Who executed the run. Part of TODO(schema-gap: run history): the contract
+   * names an actor only on a SIGNED ReviewRecord, and a run is signed by
+   * nobody, so a run's owner is unrepresentable today. Undefined on a live
+   * run, which genuinely records no owner.
+   */
+  ranByActorId?: ActorId;
 }

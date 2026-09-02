@@ -31,13 +31,48 @@
  * above already points at the audit trail for the signer — and dropping it
  * would leave a card the "Assigned to me" filter kept with nothing on it
  * saying why.
+ *
+ * NEW SINCE THE LAST RUN. A card carries a sixth line only when the run diff
+ * says this finding was not in the previous run, and the words are the diff's
+ * own label. Hierarchy, deliberately: verdict and materiality stay the top row
+ * (what kind of problem, how much it matters), the title and the values stay
+ * the middle (what it is, what it says), and the marker joins the assignment
+ * line at the bottom, because both answer the same kind of question — where
+ * this finding came from and whose it is — rather than what its evidence says.
+ * Tone, not weight, does the separating, because this system builds hierarchy
+ * from size and colour: of the small lines that end a card the marker is the
+ * loudest (`ink`) because it is the exception — two cards in eleven carry it —
+ * the summary sits at `ink-2`, and the assignment, which is on every card, is
+ * quietest at `ink-3`. `ink` is the primary text colour and not one of the
+ * three semantics: a marker in `accent`, `warn` or `alert` would report a
+ * verdict this finding does not have, and a marker on a rule or in a chip
+ * would break the border and icon rules. It is a line of text, and it stops
+ * there.
+ *
+ * It sits BELOW the evidence captions (the delta, the live source) and not
+ * among them: those say what the finding found, and where it came from is a
+ * different kind of fact — the one the assignment line beneath it also
+ * answers.
  */
 
 import { getFindingAssignment } from "@/lib/data";
-import type { ClaimVerdict, Finding } from "@/lib/data";
+import type { ClaimVerdict, Finding, FindingRunChange } from "@/lib/data";
 
 interface FindingCardProps {
   finding: Finding;
+  /**
+   * Where this finding sits in the diff against the previous run, from
+   * getFindingRunChange(id, reviewId). PASSED IN, unlike the assignment above:
+   * a finding's assignee is readable off the finding, but its change status is
+   * a statement about TWO runs, and only the caller knows which run is on
+   * screen. Defaulting it here would resolve the demo run's diff under every
+   * card — the degraded run reuses finding ids, so two of its cards would
+   * claim "New since the last run" against a comparison that never ran.
+   *
+   * Absent means no comparison reached this card, which is why the card marks
+   * only what the diff positively reports and never renders "unchanged".
+   */
+  change?: FindingRunChange;
   /** Renders the ink selection ring. */
   selected?: boolean;
   /** Receives the finding id; a parent closing over the finding can ignore it. */
@@ -124,8 +159,29 @@ function hostOf(url: string | undefined): string | undefined {
   }
 }
 
+/**
+ * Whether a change carries the ONE state this card marks.
+ *
+ * Exported so the queue counts markers with the same predicate that draws
+ * them: a header saying "2 findings are new" above three marked cards would be
+ * the exact drift this app keeps deleting.
+ *
+ * Only `new` earns a line. `unchanged` is 8 of this run's 11 findings — a
+ * badge on nearly every card states the norm rather than the exception, and
+ * the brief's "uniform badge" is what that becomes. `changed` is a real fact
+ * but its `detail` is a sentence naming what moved, which belongs to the
+ * analysis screen's change summary; a truncated second telling here would be
+ * the weaker one. The queue triages, so it marks what arrived.
+ */
+export function isNewSinceLastRun(
+  change: FindingRunChange | undefined,
+): change is FindingRunChange {
+  return change?.id === "new";
+}
+
 export default function FindingCard({
   finding,
+  change,
   selected = false,
   onSelect,
 }: FindingCardProps) {
@@ -221,10 +277,29 @@ export default function FindingCard({
         </p>
       ) : null}
 
-      {/* Quiet, and always present: "Assigned to M. Bui · Reviewer", or the
-          unassigned sentence. Same tone either way — the words carry it, and
-          there is no dot, chip or rule to make an owner look like a state. */}
-      <p className="mt-2 text-caption text-ink-3">{assignment.text}</p>
+      {/* The card's metadata footer: which run put this finding here, and
+          whose queue it sits in. Both are facts about the finding's place in
+          the process rather than about its evidence, so they group — and they
+          are told apart by tone, not by a rule between them. */}
+      <div className="mt-2 flex flex-col gap-1">
+        {/* NEW SINCE THE LAST RUN. Label text, per the border rule — no left
+            rule, no chip, no dot, and no semantic colour: `accent`/`warn`/
+            `alert` each mean something (verified / stale / conflict) and "new"
+            means none of them, so borrowing one would report a verdict this
+            finding does not have. It is separated from the verdict and
+            materiality labels by being sentence case at caption size where
+            those are uppercase micro, and from the two lines it sits between
+            by tone. The words are the diff's own label, so nothing here is
+            authored. */}
+        {isNewSinceLastRun(change) ? (
+          <p className="text-caption font-medium text-ink">{change.label}</p>
+        ) : null}
+
+        {/* Quiet, and always present: "Assigned to M. Bui · Reviewer", or the
+            unassigned sentence. Same tone either way — the words carry it, and
+            there is no dot, chip or rule to make an owner look like a state. */}
+        <p className="text-caption text-ink-3">{assignment.text}</p>
+      </div>
     </button>
   );
 }
