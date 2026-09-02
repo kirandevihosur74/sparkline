@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Free checks — every push and PR. No secrets, no API spend.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npx next typegen && npx tsc --noEmit
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Build
+        run: npm run build
+
+# API-dependent tests (smoke, extraction, pipeline, e2e) run locally only —
+# they spend real credits/quota (~3 SerpApi searches + ~16 DWS credits per
+# run): npm run smoke:nutrient / smoke:serpapi / test:extraction /
+# test:pipeline / test:e2e.
+#
+# CD: Vercel deploys via its Git integration once the repo is connected
+# (vercel.com/new → import repo) — no workflow needed here. If a
+# workflow-driven deploy is preferred later, add a `deploy` job using
+# `vercel deploy --prebuilt` gated on this CI passing.

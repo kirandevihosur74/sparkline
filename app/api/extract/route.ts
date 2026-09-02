@@ -7,7 +7,15 @@ import { extractClaims } from "@/lib/nutrient";
  */
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData();
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      return NextResponse.json(
+        { error: "Expected multipart form with `file` and `documentId`" },
+        { status: 400 }
+      );
+    }
     const file = formData.get("file");
     const documentId = formData.get("documentId");
 

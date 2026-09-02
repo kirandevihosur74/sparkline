@@ -44,6 +44,7 @@ import type {
   FlagStatus,
   RejectReason,
 } from "@/lib/data";
+import { formatUtcParts } from "@/lib/format";
 
 /**
  * Who produces the signature. DESIGN_SYSTEM.md: "Nutrient DWS" attributes
@@ -89,27 +90,10 @@ const REJECT_REASON: Record<RejectReason, string> = {
  * narrow column. UTC is what DecisionBar's confirmation strip shows, so the
  * ledger and the decision that produced it never read differently.
  */
-const SIGNED_DATE = new Intl.DateTimeFormat("en-GB", {
-  day: "2-digit",
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
-const SIGNED_TIME = new Intl.DateTimeFormat("en-GB", {
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false,
-  timeZone: "UTC",
-});
-
 function formatSignedAt(
   iso: string,
 ): { date: string; time: string } | undefined {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return undefined;
-  return { date: SIGNED_DATE.format(at), time: `${SIGNED_TIME.format(at)} UTC` };
+  return formatUtcParts(iso);
 }
 
 /** Normalized field names arrive as `expansion_install_cost`. */

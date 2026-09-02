@@ -56,7 +56,7 @@ export const DEMO_REVIEW_ID = "demo-2026-08";
 const documents: DocumentMeta[] = [
   {
     id: "doc-a",
-    title: "Project Ardenfell IC Memo",
+    title: "Wrenfield IC Memo",
     author: "Halcyon Infrastructure Partners",
     docType: "investment-memo",
     datedAt: "2026-03-20",
@@ -91,6 +91,8 @@ const claims = {
   // Doc A — Investment Committee Memo
   a1: {
     id: "claim-a1",
+    claimType: "EXPANSION_INSTALL_COST",
+    extractionMethod: "table",
     documentId: "doc-a",
     field: "expansion_install_cost",
     value: "$186M",
@@ -99,6 +101,8 @@ const claims = {
   },
   a2: {
     id: "claim-a2",
+    claimType: "CAPACITY",
+    extractionMethod: "table",
     documentId: "doc-a",
     field: "portfolio_capacity",
     value: "250 MW",
@@ -107,6 +111,8 @@ const claims = {
   },
   a3: {
     id: "claim-a3",
+    claimType: "COD",
+    extractionMethod: "table",
     documentId: "doc-a",
     field: "commercial_operation_date",
     value: "Q4 2027",
@@ -115,6 +121,8 @@ const claims = {
   },
   a4: {
     id: "claim-a4",
+    claimType: "COUNTERPARTY_STANDING",
+    extractionMethod: "table",
     documentId: "doc-a",
     field: "counterparty_standing",
     value: "Master installation agreement in good standing",
@@ -123,6 +131,8 @@ const claims = {
   },
   a5: {
     id: "claim-a5",
+    claimType: "COUNTERPARTY_SCALE",
+    extractionMethod: "text",
     documentId: "doc-a",
     field: "counterparty_scale",
     value: "One of the largest residential solar installers in the United States",
@@ -131,6 +141,8 @@ const claims = {
   },
   a6: {
     id: "claim-a6",
+    claimType: "WARRANTY",
+    extractionMethod: "table",
     documentId: "doc-a",
     field: "workmanship_warranty",
     value: "25-year installer-backed workmanship warranty",
@@ -139,6 +151,8 @@ const claims = {
   },
   a7: {
     id: "claim-a7",
+    claimType: "AGREEMENT_DATE",
+    extractionMethod: "table",
     documentId: "doc-a",
     field: "agreement_execution_date",
     value: "January 2026",
@@ -148,6 +162,8 @@ const claims = {
   // Doc B — Independent Engineering Report
   b1: {
     id: "claim-b1",
+    claimType: "EXPANSION_INSTALL_COST",
+    extractionMethod: "table",
     documentId: "doc-b",
     field: "expansion_install_cost",
     value: "$211M",
@@ -156,6 +172,8 @@ const claims = {
   },
   b2: {
     id: "claim-b2",
+    claimType: "CAPACITY",
+    extractionMethod: "table",
     documentId: "doc-b",
     field: "portfolio_capacity",
     value: "250 MW",
@@ -164,6 +182,8 @@ const claims = {
   },
   b3: {
     id: "claim-b3",
+    claimType: "COD",
+    extractionMethod: "table",
     documentId: "doc-b",
     field: "commercial_operation_date",
     value: "Q4 2027",
@@ -172,6 +192,8 @@ const claims = {
   },
   b4: {
     id: "claim-b4",
+    claimType: "MODULE_SPEC",
+    extractionMethod: "text",
     documentId: "doc-b",
     field: "module_design_assumption",
     value: "Tier-1 440 W modules",
@@ -180,6 +202,8 @@ const claims = {
   },
   b5: {
     id: "claim-b5",
+    claimType: "OM_COST",
+    extractionMethod: "table",
     documentId: "doc-b",
     field: "om_cost_assumption",
     value: "$14.2M per year",
@@ -204,6 +228,8 @@ const contradictionFlag: ContradictionFlag = {
   field: "expansion_install_cost",
   claimA: claims.a1,
   claimB: claims.b1,
+  variancePct: 13.4,
+  materiality: "HIGH",
   confidence: normalizeConfidence(94.6),
   status: "approved",
 };
@@ -221,6 +247,8 @@ const stalenessFlag: StalenessFlag = {
     "Freedom Forever LLC filed a voluntary Chapter 11 petition on April 15, 2026 (U.S. Bankruptcy Court, District of Delaware)",
   query: "Freedom Forever solar Chapter 11 bankruptcy filing",
   liveSourceUrl: "https://restructuring.ra.kroll.com/FreedomForever/",
+  checkedAt: "2026-08-31T08:00:00Z",
+  materiality: "CRITICAL",
   confidence: normalizeConfidence(96.8),
   status: "open",
 };
@@ -511,6 +539,8 @@ const trustScore: TrustScore = {
   blended: 72,
   extraction: 88,
   crossReference: 62,
+      formula:
+        "Start at 100, subtract materiality-weighted penalties for each conflicting, stale, or review-required claim, then scale by average extraction confidence.",
 };
 
 // ---------------------------------------------------------------------------
@@ -607,7 +637,7 @@ const events: PipelineEvent[] = [
   {
     timestamp: "1:53",
     message:
-      "7 claims extracted from Project Ardenfell IC Memo — mean extraction confidence 92%.",
+      "7 claims extracted from Wrenfield IC Memo — mean extraction confidence 92%.",
   },
   {
     timestamp: "1:58",
@@ -948,7 +978,7 @@ const degradedEvents: PipelineEvent[] = [
   {
     timestamp: "1:51",
     message:
-      "7 claims extracted from Project Ardenfell IC Memo — mean extraction confidence 92%.",
+      "7 claims extracted from Wrenfield IC Memo — mean extraction confidence 92%.",
   },
   {
     timestamp: "3:39",
