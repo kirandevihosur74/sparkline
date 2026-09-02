@@ -38,12 +38,23 @@ export type {
   PipelineEvent,
   // Derived
   CoverageBreakdown,
-  // Trust-score breakdown (two of four bars frontend-derived —
-  // TODO(schema-gap: TrustScore))
+  // Trust-score breakdown — TWO backend-backed bars, plus the counted-not-
+  // scored context line beneath the dial. A run that could not finish its
+  // checks records NO score: the absence is typed (UnscoredTrustScore /
+  // UnscoredTrustBreakdown), never a held-down number.
+  // (TODO(schema-gap: TrustScore))
   TrustComponentId,
   TrustComponentOrigin,
   TrustComponentCount,
   TrustScoreComponent,
+  TrustContextFactId,
+  TrustContextFact,
+  TrustDistortionNote,
+  TrustScoreUnavailable,
+  UnscoredTrustScore,
+  RunTrustScore,
+  ScoredTrustBreakdown,
+  UnscoredTrustBreakdown,
   TrustScoreBreakdown,
 } from "./types";
 

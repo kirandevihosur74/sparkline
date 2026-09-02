@@ -32,8 +32,12 @@ import type {
   PipelineStage,
   PipelineEvent,
   ClaimVerdict,
+  RunTrustScore,
+  UnscoredTrustScore,
   TrustScoreBreakdown,
   TrustScoreComponent,
+  TrustContextFact,
+  TrustDistortionNote,
 } from "./types";
 import { normalizeConfidence } from "./types";
 
@@ -725,9 +729,15 @@ const review: ReviewSummary = {
 //
 // The honesty rule this run exists to demonstrate: the three claims that were
 // routed to live verification and never checked come back "unverified", each
-// saying so in its own note. Nothing is silently corroborated, and the trust
-// score is penalised for the missing coverage rather than flattered by the
-// silence.
+// saying so in its own note. Nothing is silently corroborated, and no trust
+// score is reported at all — a run that could not finish its checks has no
+// evidence to score, so it says so instead of publishing a number.
+//
+// Two different counts fall out of that, and the copy below never states either
+// one bare: THREE is claims routed to the live check (the failure's
+// affectedClaimIds); FIVE is findings carrying the unverified verdict — those
+// three plus the two private assumptions that had no verification strategy in
+// the first place. See routedLiveCheckClaimCount / unverifiedFindingCount.
 //
 // TODO(schema-gap: pipeline): same gap as the demo run — the backend has no
 // Run entity, so a failed run is a view-model here and nowhere else. It also
@@ -849,22 +859,80 @@ const degradedFindings: Finding[] = [
 ];
 
 /**
- * Trust score for the degraded run.
+ * The two counts this run has to keep apart — derived from the findings above,
+ * never written out, so neither can drift from what the screens render.
+ *
+ * `routedLiveCheckClaimCount` counts CLAIMS handed to the live check; every one
+ * of them was stranded when SerpApi refused the query, so it is also the
+ * failure's affectedClaimIds count. `unverifiedFindingCount` counts FINDINGS
+ * carrying the unverified verdict, and it is the larger number: it additionally
+ * covers the private assumptions that never had a verification strategy for the
+ * live check to refuse. Both are right and they count different things, so
+ * every string below that states one of them names its unit — a bare number in
+ * this run's copy reads as the other one.
+ */
+const routedLiveCheckClaimCount = UNCHECKED_CLAIM_IDS.length;
+const unverifiedFindingCount = degradedFindings.filter(
+  (finding) => finding.verdict === "unverified",
+).length;
+/** Unverified findings the live check was never going to settle either way. */
+const noStrategyFindingCount = degradedCarriedFindings.filter(
+  (finding) => finding.verdict === "unverified",
+).length;
+const degradedFlagLabel = `${degradedFlags.length} ${
+  degradedFlags.length === 1 ? "flag" : "flags"
+}`;
+
+/**
+ * Trust readings for the degraded run — the two components, and NO score.
  *
  * `extraction` is unchanged (88): the same 12 claims came out of the same DWS
  * call. `crossReference` is 71 rather than 62 — the contradiction still weighs
  * on it, but the CRITICAL staleness flag was never discovered, so it cannot be
- * priced in. That must NOT read as a better outcome, which is why `blended` is
- * 58 against the happy path's 72: the blend is penalised for the live-check
- * coverage this run does not have. A missing check is missing information, not
- * a clean bill of health.
+ * priced in.
+ *
+ * That second number is exactly why this run has no blended score. Blending it
+ * would score the run on a reading the missing check inflated; holding the
+ * blend down by hand would print a dial its own two bars do not add up to —
+ * the arithmetic visibly failing on the one screen that exists to show the
+ * arithmetic. So nothing is blended and nothing is held down. The run reports
+ * the two readings it has, says out loud that one of them reads too high
+ * (degradedCrossDocumentDistortion below), and records the absence of a score
+ * as an absence.
  */
-const degradedTrustScore: TrustScore = {
-  blended: 58,
+const degradedTrustScore: UnscoredTrustScore = {
   extraction: 88,
   crossReference: 71,
-      formula:
-        "Start at 100, subtract materiality-weighted penalties for each conflicting, stale, or review-required claim, then scale by average extraction confidence.",
+  unavailable: {
+    headline: "Trust score unavailable",
+    reason:
+      "External verification didn't run, so there isn't enough evidence to score this document set.",
+  },
+};
+
+/**
+ * The sharpest thing this run has to say about itself, as renderable copy
+ * rather than a code comment: the failed live check does not merely leave the
+ * score incomplete, it FLATTERS one of its two bars.
+ *
+ * `crossReference` is 71 here against 62 on the completed run — higher, because
+ * the CRITICAL staleness flag was never discovered and so was never priced in.
+ * Both numbers are read off the two runs' own TrustScore objects, so this note
+ * cannot drift from the bars it describes. ErrorPanel renders it beside the
+ * failure; the trust panel renders it on the face of the bar itself
+ * (TrustScoreBreakdown.scoreDistortion) — this run has no dial to hang it
+ * beside.
+ */
+const degradedCrossDocumentDistortion: TrustDistortionNote = {
+  componentId: "cross_document_agreement",
+  direction: "up",
+  headline:
+    "Cross-document agreement is reading too high — the check that would have pulled it down never ran.",
+  detail:
+    "Nothing outside these two documents contradicted them, so the comparison stage scored them as agreeing — but that is only true because the live check was refused. The staleness this run failed to discover is precisely what would have lowered this bar. A failed external check makes the documents look MORE consistent than they are, and it does it silently: the number moves the wrong way exactly when evidence goes missing. That is the argument for re-running the live check, not for trusting the higher figure. It is also why this run reports no trust score: a blend built on this bar would inherit exactly the flattery the bar is admitting to.",
+  observedValue: normalizeConfidence(degradedTrustScore.crossReference),
+  comparisonValue: normalizeConfidence(trustScore.crossReference),
+  comparisonLabel: "the same bundle with the live check completed",
 };
 
 const degradedStages: PipelineStage[] = [
@@ -892,13 +960,12 @@ const degradedStages: PipelineStage[] = [
     durationMs: 812,
     metric: { value: 0, unit: "queries" },
     failure: {
-      headline:
-        "3 claims are unverified — SerpApi refused the live query on a rate limit.",
-      detail:
-        "SerpApi returned HTTP 429 with Retry-After: 60 before any result came back, so the counterparty external check never executed. Extraction and cross-document comparison had already finished and their results stand. The three claims that only a live source could settle are reported unverified rather than assumed correct — re-running the live check is the only thing that resolves them.",
+      headline: `${routedLiveCheckClaimCount} claims routed to the live check went unchecked — SerpApi refused the query on a rate limit.`,
+      detail: `SerpApi returned HTTP 429 with Retry-After: 60 before any result came back, so the counterparty external check never executed. Extraction and cross-document comparison had already finished and their results stand. The ${routedLiveCheckClaimCount} claims that only a live source could settle are reported unverified rather than assumed correct — re-running the live check is the only thing that resolves them. That number counts claims routed to the live check. The coverage bar counts findings, and ${unverifiedFindingCount} of those carry the unverified verdict: these ${routedLiveCheckClaimCount}, plus ${noStrategyFindingCount} private assumptions in the engineering report that never had a verification strategy for the live check to refuse.`,
       code: "HTTP 429",
       retryAfterSec: 60,
       affectedClaimIds: UNCHECKED_CLAIM_IDS,
+      scoreDistortion: degradedCrossDocumentDistortion,
     },
   },
 ];
@@ -932,8 +999,7 @@ const degradedEvents: PipelineEvent[] = [
   },
   {
     timestamp: "3:42",
-    message:
-      "Counterparty standing, counterparty scale and the workmanship warranty have no counterpart in the second document — routing 3 claims to live check.",
+    message: `Counterparty standing, counterparty scale and the workmanship warranty have no counterpart in the second document — routing ${routedLiveCheckClaimCount} claims to the live check.`,
   },
   {
     timestamp: "3:42",
@@ -942,22 +1008,19 @@ const degradedEvents: PipelineEvent[] = [
   },
   {
     timestamp: "3:42",
-    message:
-      "Live check abandoned after the refusal. The 3 routed claims are recorded unverified — an unchecked claim is not a corroborated one.",
+    message: `Live check abandoned after the refusal. All ${routedLiveCheckClaimCount} claims routed to it are recorded unverified — an unchecked claim is not a corroborated one.`,
     verdict: "unverified",
   },
   {
     timestamp: "3:43",
-    message:
-      "Run complete with a failed stage — 12 claims, 1 flag, 5 claims left unverified, trust score 58.",
+    message: `Run complete with a failed stage — ${allClaims.length} claims, ${degradedFlagLabel}, ${unverifiedFindingCount} findings carrying the unverified verdict: the ${routedLiveCheckClaimCount} claims routed to the live check, plus ${noStrategyFindingCount} private assumptions with no verification strategy. No trust score — the live check never ran.`,
   },
 ];
 
 const degradedReview: ReviewSummary = {
   id: DEGRADED_REVIEW_ID,
   title: "Wrenfield Residential Solar Portfolio",
-  subtitle:
-    "250 MW distributed solar · expansion tranche diligence · 3 claims unverified, live check did not complete",
+  subtitle: `250 MW distributed solar · expansion tranche diligence · ${routedLiveCheckClaimCount} claims were routed to the live check and none completed`,
   createdAt: "2026-08-31T05:31:10.000Z",
   status: "complete",
   documents,
@@ -1072,12 +1135,17 @@ export function getAuditRecords(
   return resolveRun(reviewId)?.auditRecords ?? [];
 }
 
-/** The blended trust score (also available on getReview().trustScore). */
-export function getTrustScore(): TrustScore;
-export function getTrustScore(reviewId: string): TrustScore | undefined;
+/**
+ * The trust readings this run recorded (also on getReview().trustScore).
+ *
+ * May be an UnscoredTrustScore: a run that could not finish its checks records
+ * its two component readings and no blended number at all.
+ */
+export function getTrustScore(): RunTrustScore;
+export function getTrustScore(reviewId: string): RunTrustScore | undefined;
 export function getTrustScore(
   reviewId: string = DEMO_REVIEW_ID,
-): TrustScore | undefined {
+): RunTrustScore | undefined {
   return resolveRun(reviewId)?.review.trustScore;
 }
 
@@ -1145,25 +1213,18 @@ export function getDocumentAvgConfidence(
 // ---------------------------------------------------------------------------
 // Trust-score breakdown — DERIVED, never stored.
 //
-// TODO(schema-gap: TrustScore): only two of these four bars exist in the
-// backend. See the full statement of the gap on TrustScoreBreakdown in
-// lib/data/types.ts — `external_verification` and `humanSignoff` have NO
-// backend field at all and are computed below from findings, stages and audit
-// records; `blended` is the backend's 40/60 blend of the OTHER TWO, so the
-// derived bars are visible but do not move the dial.
+// TODO(schema-gap: TrustScore): now a small gap, and what is left of it is
+// ABSENCE. BOTH bars below are backend fields (TrustScore.extraction,
+// TrustScore.crossReference); when the run recorded a blend, `blended` is the
+// backend's 40/60 blend of exactly those two, so the dial and its breakdown
+// agree arithmetically. When the run recorded NO blend, no dial is built — the
+// breakdown carries `unavailable` instead, and the same two bars and the same
+// counted context still render. Nothing here holds a number down. Live
+// verification and human sign-off are counted, not scored: they come out of
+// findings and audit records as `context`, a plain sentence, because the
+// backend does not blend them in. See the full statement on
+// TrustScoreBreakdown in lib/data/types.ts.
 // ---------------------------------------------------------------------------
-
-/** The confidence a finding carries, wherever its union member keeps it. */
-function findingConfidence(finding: Finding): number {
-  switch (finding.verdict) {
-    case "conflicting":
-      return finding.flag.confidence;
-    case "stale":
-      return finding.flag.confidence;
-    default:
-      return finding.claim.confidence;
-  }
-}
 
 function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
   const score = run.review.trustScore;
@@ -1202,41 +1263,42 @@ function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
     origin: "backend",
   };
 
-  // 3 — External verification. FRONTEND-DERIVED: no backend field exists.
-  // Coverage of the claims routed to a live source (settled ÷ routed), scaled
-  // by the mean confidence of what actually came back. Claims the live-check
-  // stage names as unchecked count as routed-and-unsettled, so a refused query
-  // pulls this bar to zero instead of leaving it silently absent.
-  const liveSettled = run.findings.filter(
+  // --- Context. Counted, NOT scored: nothing below moves `blended`. ---------
+  // These are the same literal counts the old external-verification and
+  // human-sign-off bars carried. The synthetic 0–1 values are gone, because
+  // the backend never blended them and a bar that cannot move the dial reads
+  // like arithmetic that does not add up.
+
+  // Claims a live source actually settled, either way — a stale verdict is a
+  // checked claim, not a failed one.
+  const liveChecked = run.findings.filter(
     (f) => f.verdict === "stale" || f.verdict === "corroborated",
   );
+  // Claims routed to a live source that the failed stage names as unreached.
   const unchecked =
     run.stages.find((s) => s.id === "live_check")?.failure?.affectedClaimIds ??
     [];
-  const routed = liveSettled.length + unchecked.length;
-  const liveConfidence =
-    liveSettled.length === 0
-      ? 0
-      : liveSettled.reduce((sum, f) => sum + findingConfidence(f), 0) /
-        liveSettled.length;
-  const externalVerification: TrustScoreComponent<"external_verification"> = {
-    id: "external_verification",
-    label: "External verification",
-    value: routed === 0 ? 0 : (liveSettled.length / routed) * liveConfidence,
-    caption:
-      unchecked.length > 0
-        ? "SerpApi did not answer, so the claims routed to a live source are still open. This bar reads coverage, not doubt."
-        : "Share of the claims routed to a live source that came back settled, scaled by the confidence of what SerpApi returned.",
-    counts: [
-      { value: run.queryTraces.length, unit: "live queries completed" },
-      { value: liveSettled.length, unit: "claims settled live" },
-      { value: unchecked.length, unit: "claims left unchecked" },
-    ],
-    origin: "frontend-derived",
+  const liveVerification: TrustContextFact<"live_verification"> = {
+    id: "live_verification",
+    value: liveChecked.length,
+    label:
+      liveChecked.length === 1
+        ? "claim checked against a live source"
+        : "claims checked against live sources",
+    outstanding:
+      unchecked.length === 0
+        ? undefined
+        : {
+            value: unchecked.length,
+            unit:
+              unchecked.length === 1
+                ? "claim routed to a live source and left unchecked"
+                : "claims routed to a live source and left unchecked",
+          },
+    provider: "SerpApi",
   };
 
-  // 4 — Human sign-off. FRONTEND-DERIVED: no backend field exists.
-  // Signed decisions ÷ the findings only a human can close.
+  // Signed decisions against the findings only a human can close.
   const needsSignoff = run.findings.filter(
     (f) =>
       f.verdict === "conflicting" ||
@@ -1246,41 +1308,59 @@ function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
   const signed = run.auditRecords.filter((record) =>
     needsSignoff.some((f) => f.id === record.flagId),
   );
-  const humanSignoff: TrustScoreComponent<"human_signoff"> = {
+  const stillOpen = needsSignoff.length - signed.length;
+  const humanSignoff: TrustContextFact<"human_signoff"> = {
     id: "human_signoff",
-    label: "Human sign-off",
-    value:
-      needsSignoff.length === 0 ? 0 : signed.length / needsSignoff.length,
-    caption:
-      needsSignoff.length === 0
-        ? "No finding in this run needs a human decision, so nothing has been signed."
-        : "Decisions signed by a reviewer (Nutrient DWS) against the findings only a human can close.",
-    counts: [
-      { value: signed.length, unit: "decisions signed" },
-      { value: needsSignoff.length, unit: "findings need one" },
-      { value: needsSignoff.length - signed.length, unit: "still unsigned" },
-    ],
-    origin: "frontend-derived",
+    value: signed.length,
+    label: signed.length === 1 ? "finding signed off" : "findings signed off",
+    outstanding:
+      stillOpen <= 0
+        ? undefined
+        : {
+            value: stillOpen,
+            unit:
+              stillOpen === 1
+                ? "finding still waiting on a reviewer"
+                : "findings still waiting on a reviewer",
+          },
+    provider: "Nutrient DWS",
   };
 
+  // A failed stage's own account of how it distorts the score, read off the
+  // stage rather than restated here, so the dial and ErrorPanel cannot differ.
+  const scoreDistortion = run.stages.find((s) => s.state === "failed")?.failure
+    ?.scoreDistortion;
+
+  const parts = {
+    components: [extraction, crossDocument] as const,
+    context: [liveVerification, humanSignoff] as const,
+    ...(scoreDistortion ? { scoreDistortion } : {}),
+  };
+
+  // A run that recorded no blend gets no dial — the absence travels as the
+  // reason it happened, never as a low number standing in for one.
+  if (score.blended === undefined) {
+    return { ...parts, unavailable: score.unavailable };
+  }
+
   return {
+    ...parts,
     blended: normalizeConfidence(score.blended),
     blendedRaw: score.blended,
-    components: [
-      extraction,
-      crossDocument,
-      externalVerification,
-      humanSignoff,
-    ],
   };
 }
 
 /**
- * The trust dial plus the four components that make it auditable — DERIVED on
- * every call from the run's findings, stages, query traces and audit records,
- * never stored. The dial is never rendered without this beside it.
+ * The trust dial WHEN THERE IS ONE, the TWO backend components it is blended
+ * from, and the context line beneath it — DERIVED on every call from the run's
+ * trust readings, findings, stages and audit records, never stored. The dial is
+ * never rendered without this beside it.
  *
- * Two of the four bars are frontend-derived: see
+ * Both bars are real backend fields, so the breakdown adds up to the dial. On a
+ * run that recorded no blend the result is an UnscoredTrustBreakdown: same two
+ * bars, same counted context, and `unavailable` where the score would be.
+ * `context` is counted and reported, never blended; `scoreDistortion` is
+ * present only on a run whose failed stage flatters one of the bars. See
  * TODO(schema-gap: TrustScore) on TrustScoreBreakdown in lib/data/types.ts.
  */
 export function getTrustBreakdown(): TrustScoreBreakdown;

@@ -10,6 +10,7 @@ export default function ReviewsIndexPage() {
     <StubScreen
       title="Reviews"
       detail="Designed to list every review in the workspace — status, document count, flag count and trust score per row."
+      action={{ href: "/reviews/new", label: "Start a new review →" }}
     />
   );
 }

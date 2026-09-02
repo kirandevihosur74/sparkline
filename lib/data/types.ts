@@ -248,6 +248,15 @@ export interface PipelineStage {
     retryAfterSec?: number;
     /** Claims that went unchecked because of this failure. */
     affectedClaimIds: string[];
+    /**
+     * The trust-score reading this failure pushes in the WRONG direction, as
+     * renderable copy for ErrorPanel. Present when a stage failing does not
+     * merely leave the score incomplete but actively flatters it — see
+     * TrustDistortionNote. The same object is surfaced on
+     * TrustScoreBreakdown.scoreDistortion, so the error panel and the dial
+     * cannot tell two different stories.
+     */
+    scoreDistortion?: TrustDistortionNote;
   };
 }
 
@@ -287,7 +296,12 @@ export interface ReviewSummary {
   flagCount: number;
   /** Live queries executed (funnel counter). */
   queryCount: number;
-  trustScore: TrustScoreT;
+  /**
+   * What this run recorded about its own trust. A run that could not finish
+   * its checks records the two component readings and NO blended number — see
+   * RunTrustScore.
+   */
+  trustScore: RunTrustScore;
 }
 
 /**
@@ -367,14 +381,23 @@ export interface TrustComponentCount {
   unit: string;
 }
 
-/** The four trust components, in the fixed order they are rendered. */
-export type TrustComponentId =
-  | "extraction_quality"
-  | "cross_document_agreement"
-  | "external_verification"
-  | "human_signoff";
+/**
+ * The TWO components the backend actually blends, in the fixed order they are
+ * rendered. Both are real fields on the backend TrustScore, which is the whole
+ * point: what the dial shows and what the dial is made of are the same thing.
+ *
+ * Live verification and human sign-off are NOT here. They are real counts, but
+ * the backend never folded them into the number, so they are reported as
+ * context beneath the dial (TrustContextFact) instead of as bars that appear to
+ * move it and do not.
+ */
+export type TrustComponentId = "extraction_quality" | "cross_document_agreement";
 
-/** Where a component's number comes from — see TODO(schema-gap: TrustScore). */
+/**
+ * Where a component's number comes from. Every bar declares this so the UI can
+ * mark anything the backend cannot defend; today BOTH bars are "backend", and
+ * "frontend-derived" is carried for the next component that is not.
+ */
 export type TrustComponentOrigin = "backend" | "frontend-derived";
 
 /** One bar of the trust-score breakdown. */
@@ -392,40 +415,187 @@ export interface TrustScoreComponent<
   counts: TrustComponentCount[];
   /**
    * "backend" — read straight off TrustScore. "frontend-derived" — computed
-   * here from findings/records because the backend has no field for it. The
-   * UI must be able to mark the derived bars; see the TODO below.
+   * here because the backend has no field for it.
    */
   origin: TrustComponentOrigin;
 }
 
 /**
- * The trust dial and the four components that make it auditable.
+ * The two facts reported beneath the dial rather than inside it. Same order as
+ * `TrustScoreBreakdown.context`.
+ */
+export type TrustContextFactId = "live_verification" | "human_signoff";
+
+/**
+ * One clause of the plain context line under the dial, e.g.
+ * "2 claims checked against live sources · 2 findings signed off".
+ *
+ * These carry the SAME literal counts the old external-verification and
+ * human-sign-off bars carried. What they deliberately DROP is the synthetic
+ * 0–1 score those bars wore: the backend never blends these counts into
+ * `blended`, so scoring them implied an arithmetic that did not hold. A count
+ * with a unit is exactly as auditable and claims nothing false.
+ *
+ * Reads as "{value} {label}", optionally followed by `outstanding`.
+ */
+export interface TrustContextFact<
+  Id extends TrustContextFactId = TrustContextFactId,
+> {
+  id: Id;
+  /** The literal count. Never scaled, never blended into `blended`. */
+  value: number;
+  /** Predicate completing `value`, already agreeing with it in number. */
+  label: string;
+  /**
+   * What is still open, when anything is — the system says what it does not
+   * know. Absent when nothing is outstanding, never a zero.
+   */
+  outstanding?: TrustComponentCount;
+  /** Who did this work: "SerpApi", "Nutrient DWS". Rendered next to its output. */
+  provider: string;
+}
+
+/**
+ * A trust-score reading that a failed stage pushes in the WRONG direction.
+ *
+ * The degraded run is the case this exists for: with the live check refused,
+ * cross-document agreement reads HIGHER than on the completed run, because the
+ * staleness that would have pulled it down was never discovered. A missing
+ * external check makes the documents look more consistent than they are. That
+ * has to be on screen — in ErrorPanel next to the failure, and on the face of
+ * the bar itself — not buried in a code comment, because a reviewer reading the
+ * higher number has no other way to know it is flattery. It is also why that
+ * run has no score at all: the one reading the missing check would have moved
+ * is a reading this run cannot defend, so nothing is blended from it.
+ *
+ * `observedValue` and `comparisonValue` are supplied as numbers, not baked into
+ * `detail`, so the copy and the bar can never disagree.
+ */
+export interface TrustDistortionNote {
+  /** Which bar reads wrong. */
+  componentId: TrustComponentId;
+  /** Which way the failure moves it. "up" is the dangerous direction. */
+  direction: "up" | "down";
+  /** One line, consequence before cause. */
+  headline: string;
+  /** The full argument, in prose, with no numbers in it. */
+  detail: string;
+  /** What the bar reads in this run, 0–1. */
+  observedValue: number;
+  /** What the same bar reads when the stage completes, 0–1. */
+  comparisonValue: number;
+  /** Names what `comparisonValue` came from, e.g. "the same bundle, live check completed". */
+  comparisonLabel: string;
+}
+
+/**
+ * Why a run has no trust score, as renderable copy.
+ *
+ * A run whose external check never ran cannot be scored: any number would rest
+ * on the two components that DID run, and one of those two is exactly the
+ * reading the missing check would have moved. Rather than print a figure and
+ * then argue with it, the run records the absence — the system says what it
+ * does not know. Nothing is ever held down instead.
+ *
+ * Fixture-authored copy today; see TODO(schema-gap: TrustScore) below.
+ */
+export interface TrustScoreUnavailable {
+  /** Stands where the dial would be, e.g. "Trust score unavailable". */
+  headline: string;
+  /** One line: what did not run, and why that leaves nothing to score. */
+  reason: string;
+}
+
+/**
+ * The trust readings ONE RUN recorded.
+ *
+ * Both COMPONENT readings always exist — extraction and comparison ran, and
+ * their numbers are the two bars. `blended` does not always exist: a run that
+ * could not finish its checks produces no blended number at all, and
+ * `unavailable` is required in its place. A score is therefore either the
+ * backend's blend of the two components shown beside it, or it is absent and
+ * says why. It is never a number the components beside it do not add up to.
+ *
+ * TODO(schema-gap: TrustScore): the backend TrustScore (lib/types.ts:47-52)
+ * makes `blended` REQUIRED, so it cannot record a run that produced components
+ * but no score — such a run would have to carry an invented number.
+ * UnscoredTrustScore is the frontend-only half of this union until
+ * TrustScore.blended becomes nullable.
+ */
+export interface UnscoredTrustScore {
+  /** Never present on an unscored run. The absence IS the value. */
+  blended?: undefined;
+  extraction: number;
+  crossReference: number;
+  /** Required whenever there is no blended number. */
+  unavailable: TrustScoreUnavailable;
+}
+
+export type RunTrustScore = TrustScoreT | UnscoredTrustScore;
+
+/**
+ * The trust dial, the two components it is made of, and the context that is
+ * deliberately outside it.
  *
  * The dial NEVER renders without this breakdown beside it: a single blended
  * number with no visible parts is a number the reviewer has to take on faith.
+ * And a run with NO score renders no dial at all — `blended` is absent,
+ * `unavailable` is required in its place, and the two bars plus the counted
+ * context carry what the run does know. The absence is typed; it is never
+ * signalled by a magic number.
  *
- * TODO(schema-gap: TrustScore): the backend TrustScore (lib/types.ts:47-52)
- * carries ONLY `blended`, `extraction` and `crossReference`. TWO OF THE FOUR
- * BARS HAVE NO BACKEND FIELD WHATSOEVER:
+ * TODO(schema-gap: TrustScore): what is left of this gap is ABSENCE. The
+ * backend TrustScore (lib/types.ts:47-52) carries `blended`, `extraction` and
+ * `crossReference`, and BOTH bars are exactly those fields — so on a run that
+ * completed, `blended` IS the backend's 40/60 blend of the two values shown,
+ * and nothing is displayed as a component that does not move it. What the
+ * backend cannot express is a run with no score: `blended` is a required number
+ * there, so a run that could not finish its checks would have to carry an
+ * invented one. That is why `blended`/`blendedRaw` are absent on
+ * UnscoredTrustBreakdown rather than suppressed — see the TODO on
+ * RunTrustScore above.
  *
- *   - `external_verification` — frontend-derived in fixtures.ts from the
- *     findings whose verdict came out of a live check (stale / corroborated)
- *     against the claims the live-check stage names as unchecked
- *     (PipelineStage.failure.affectedClaimIds), weighted by those findings'
- *     own confidence. Nothing about live-verification coverage is persisted.
- *   - `human_signoff` — frontend-derived in fixtures.ts from AuditRecords
- *     (signed decisions) over the findings that require a human decision
- *     (conflicting / stale / review_required). The backend stores each
- *     ReviewRecord but computes no completion ratio.
+ * The rest of what is outside the contract is presentation-only:
  *
- * Consequence: `blended` is NOT the average of the four bars — it is the
- * backend's 40/60 blend of the first two only, so the last two are shown but
- * do not move the dial. Before this is real the backend must either grow
- * `externalVerification` and `humanSignoff` fields on TrustScore or redefine
- * the blend to include them. Until then, `origin: "frontend-derived"` marks
- * the two bars that the backend cannot yet defend.
+ *   - `context` — derived in fixtures.ts from findings (verdicts that came out
+ *     of a live check) and AuditRecords (signed decisions). These are real
+ *     counts the backend can already produce, but it stores no rollup of them,
+ *     and — the point — it does not blend them into the score. They are
+ *     reported as a sentence, NOT scored, on a scored and an unscored run
+ *     alike.
+ *   - `scoreDistortion` — fixture-authored copy, part of the same
+ *     TODO(schema-gap: pipeline) as PipelineStage: the backend has no run
+ *     entity, so nothing records that a stage failed or what its failure did
+ *     to the readings.
+ *
+ * If the backend later decides live verification and sign-off SHOULD move the
+ * number, that is a scoring decision plus two fields — not a correction of this
+ * shape.
  */
-export interface TrustScoreBreakdown {
+interface TrustScoreBreakdownBase {
+  /** EXACTLY two, in this order — the tuple is the ordering contract. */
+  components: readonly [
+    TrustScoreComponent<"extraction_quality">,
+    TrustScoreComponent<"cross_document_agreement">,
+  ];
+  /**
+   * The plain context line beneath the dial. EXACTLY two, in this order.
+   * Counts, not scores — nothing here moves a blended number, and nothing here
+   * substitutes for one when it is missing.
+   */
+  context: readonly [
+    TrustContextFact<"live_verification">,
+    TrustContextFact<"human_signoff">,
+  ];
+  /**
+   * Present only when a stage failed in a way that flatters one of the bars.
+   * Mirrors PipelineStage.failure.scoreDistortion for the same run.
+   */
+  scoreDistortion?: TrustDistortionNote;
+}
+
+/** A run that produced a score: the dial renders, and the bars blend to it. */
+export interface ScoredTrustBreakdown extends TrustScoreBreakdownBase {
   /**
    * The dial value, normalized 0–1 (TrustScore.blended / 100 — the same
    * number, in the domain every component already speaks).
@@ -433,11 +603,20 @@ export interface TrustScoreBreakdown {
   blended: number;
   /** The raw 0–100 blend as the backend stores it, for the audit line. */
   blendedRaw: number;
-  /** EXACTLY four, in this order — the tuple is the ordering contract. */
-  components: readonly [
-    TrustScoreComponent<"extraction_quality">,
-    TrustScoreComponent<"cross_document_agreement">,
-    TrustScoreComponent<"external_verification">,
-    TrustScoreComponent<"human_signoff">,
-  ];
+  /** Never present when there is a score. */
+  unavailable?: undefined;
 }
+
+/**
+ * A run that produced NO score: there is no dial to render, and `unavailable`
+ * is the copy that stands in its place. The components and the context are
+ * still here — the run knows less, not nothing.
+ */
+export interface UnscoredTrustBreakdown extends TrustScoreBreakdownBase {
+  blended?: undefined;
+  blendedRaw?: undefined;
+  /** Required when there is no score. */
+  unavailable: TrustScoreUnavailable;
+}
+
+export type TrustScoreBreakdown = ScoredTrustBreakdown | UnscoredTrustBreakdown;

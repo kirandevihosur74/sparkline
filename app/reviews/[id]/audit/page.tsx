@@ -1,19 +1,58 @@
 /**
- * /reviews/[id]/audit — the audit ledger, screen 6 of the design system.
+ * /reviews/[id]/audit — screen 6 of DESIGN_SYSTEM.md: the audit ledger.
  *
- * Stub. The ledger's data already exists (getAuditRecords returns signed
- * decisions with reviewer, timestamp, claim context, evidence summary and a
- * clearly-labelled fixture hash), so this screen is unbuilt rather than
- * unbacked. Stubbed so the nav row resolves instead of 404ing.
+ * Server component. Every value on the screen is read here, once, from
+ * lib/data and passed down as props — there are no GET endpoints, so this page
+ * fetches nothing and the fixtures are the only implementation of the
+ * contract.
+ *
+ * An unknown id is NOT quietly served the demo run's signatures: serving one
+ * review's ledger under another review's id is the exact failure the data
+ * layer exists to prevent, and it is worse on an audit trail than anywhere
+ * else in the app. The screen says so instead.
  */
 
-import StubScreen from "@/components/StubScreen";
+import type { Metadata } from "next";
+import AuditLedger from "@/components/AuditLedger";
+import { getAuditRecords, getCoverage, getReview } from "@/lib/data";
 
-export default function ReviewAuditPage() {
+export const metadata: Metadata = {
+  title: "Audit trail · Sparkline",
+};
+
+export default async function ReviewAuditPage({
+  params,
+}: PageProps<"/reviews/[id]/audit">) {
+  // Next 16: `params` is a promise and must be awaited before it can be read.
+  const { id } = await params;
+
+  const review = getReview(id);
+
+  if (!review) {
+    // Failures name the consequence before the cause.
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center p-8">
+        <p className="max-w-prose text-body text-ink-3">
+          There is no audit trail to show: no run with this id exists in the
+          data layer, and another run&rsquo;s signatures are not this
+          run&rsquo;s record.
+        </p>
+      </div>
+    );
+  }
+
+  // The signed decisions, and the coverage of the same run — so an empty
+  // ledger can name what is still outstanding rather than reading as clean.
+  const records = getAuditRecords(review.id);
+  const coverage = getCoverage(review.id);
+
   return (
-    <StubScreen
-      title="Audit trail"
-      detail="Designed as the signed ledger: one row per human decision with its timestamp, reviewer, claim, decision, the evidence behind it and the record hash."
+    <AuditLedger
+      records={records}
+      reviewTitle={review.title}
+      reviewSubtitle={review.subtitle}
+      coverage={coverage}
+      reviewHref={`/reviews/${review.id}/review`}
     />
   );
 }

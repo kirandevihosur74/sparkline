@@ -17,11 +17,18 @@ import { DEMO_REVIEW_ID, getReview } from "@/lib/data";
 export default function StubScreen({
   title,
   detail,
+  action,
 }: {
   /** The screen's name, as it appears in the design. */
   title: string;
   /** One sentence naming what this screen would hold once it is built. */
   detail: string;
+  /**
+   * Optional onward link for a stub that stands in front of a screen that IS
+   * built — the reviews index is unbuilt, but starting a new review is not,
+   * and a stub should not dead-end a route that exists.
+   */
+  action?: { href: string; label: string };
 }) {
   // Fixture-only, like every other read in the app — there are no GET
   // endpoints, so the demo review comes from lib/data or not at all.
@@ -40,6 +47,17 @@ export default function StubScreen({
           It is not part of the demo spine, so there is no data behind it — this
           screen is empty rather than invented.
         </p>
+
+        {action ? (
+          <p className="mt-4 text-body">
+            <Link
+              href={action.href}
+              className="text-ink underline underline-offset-4 hover:text-ink-2"
+            >
+              {action.label}
+            </Link>
+          </p>
+        ) : null}
 
         <div className="mt-6 border-t border-line pt-4">
           {review ? (
