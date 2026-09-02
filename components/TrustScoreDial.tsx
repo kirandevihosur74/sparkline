@@ -16,10 +16,19 @@
  *
  *   1. the dial and its two component bars, SIDE BY SIDE — score first, then
  *      the literal counts that produced it;
- *   2. beneath them, the plain context line — the facts that are COUNTED and
+ *   2. beneath them, the FORMULA strip — the sentence the run recorded plus
+ *      the arithmetic it describes, in monospace, so "how is that calculated"
+ *      is answered where the number is, not somewhere else on the page;
+ *   3. beneath that, the plain context line — the facts that are COUNTED and
  *      deliberately NOT blended into the number;
- *   3. beneath that, CoverageBar (DESIGN_SYSTEM.md item 13, already built —
+ *   4. beneath that, CoverageBar (DESIGN_SYSTEM.md item 13, already built —
  *      composed here, never re-implemented).
+ *
+ * The formula strip is scored-runs-only. `getTrustFormula()` returns nothing
+ * for a run that recorded no blend, and the discriminated breakdown has already
+ * removed the dial there — a run with no score has no arithmetic to explain,
+ * and writing one would be the invented number the unscored path exists to
+ * avoid.
  *
  * There are exactly TWO bars because the backend blends exactly two fields
  * (`TrustScore.extraction` and `TrustScore.crossReference`). Live verification
@@ -53,11 +62,13 @@
 import { Fragment } from "react";
 import CoverageBar from "./CoverageBar";
 import { confidenceBand, type ConfidenceBand } from "./ConfidenceMeter";
+import { getTrustFormula } from "@/lib/data";
 import type {
   CoverageBreakdown,
   ScoredTrustBreakdown,
   TrustComponentCount,
   TrustDistortionNote,
+  TrustFormula,
   TrustScoreBreakdown,
   TrustScoreComponent,
   TrustScoreUnavailable,
@@ -114,6 +125,19 @@ export interface TrustScorePanelProps {
    * which is where the layout expects it.
    */
   coverage?: CoverageBreakdown;
+  /**
+   * The run this panel is reporting on. Passed straight to `getTrustFormula()`
+   * when `formula` is not supplied; omitted, the data layer's own default run
+   * answers — the id is never written down in this component.
+   */
+  reviewId?: string;
+  /**
+   * From `getTrustFormula()` — the recorded sentence and the arithmetic
+   * COMPUTED from the same two component values the bars render, so the strip
+   * cannot disagree with them. Optional: a caller that has already resolved it
+   * passes it, and anything else lets this component resolve it.
+   */
+  formula?: TrustFormula;
   /** Names the panel for assistive technology and heads the dial. */
   label?: string;
 }
@@ -121,6 +145,8 @@ export interface TrustScorePanelProps {
 export default function TrustScorePanel({
   breakdown,
   coverage,
+  reviewId,
+  formula,
   label = "Trust score",
 }: TrustScorePanelProps) {
   const { components, context, scoreDistortion } = breakdown;
@@ -131,6 +157,13 @@ export default function TrustScorePanel({
     .filter((item): item is TrustComponentCount => item !== undefined);
   const nothingCounted = context.every((fact) => fact.value === 0);
   const unavailable = breakdown.unavailable;
+
+  // Scored runs only, and the type says so: an unscored breakdown has no dial
+  // above the strip and no blend for the strip to explain.
+  const blend =
+    breakdown.unavailable === undefined
+      ? (formula ?? getTrustFormula(reviewId))
+      : undefined;
 
   return (
     <section
@@ -166,6 +199,19 @@ export default function TrustScorePanel({
           ))}
         </div>
       </div>
+
+      {/* ── How the number was reached — the sentence, then the sum ────── */}
+      {blend ? (
+        <div className="flex flex-col gap-1.5 border-t border-line px-5 py-3.5">
+          <span className="text-micro text-ink-3 uppercase">Formula</span>
+          <p className="text-caption text-ink-2">{blend.sentence}</p>
+          {/* Monospace because it is arithmetic being checked, not prose being
+              read — the operands line up under the percentages above. */}
+          <p className="tabular font-mono text-caption text-ink">
+            {blend.arithmetic}
+          </p>
+        </div>
+      ) : null}
 
       {/* ── The plain context line — counted, never blended ─────────────── */}
       <div className="flex flex-col gap-1.5 border-t border-line px-5 py-3.5">
@@ -336,9 +382,13 @@ function ComponentBar({
         )}
       </div>
 
+      {/* Track token is `line`, the same one ConfidenceMeter's bar and the
+          dial's own arc track use — `line-soft` is the internal-divider grey
+          and against `surface` it drops to 1.05:1 on the dark ground, leaving
+          the fill floating with no track behind it. */}
       <span
         aria-hidden="true"
-        className="block h-1.5 w-full overflow-hidden rounded-full bg-line-soft"
+        className="block h-1.5 w-full overflow-hidden rounded-full bg-line"
       >
         {usable ? (
           <span

@@ -5,9 +5,34 @@
  * There is no tailwind.config.ts in v4; everything lives here.
  *
  * Rule of thumb: if a value isn't in this file, don't use it in a component.
+ *
+ * TWO THEMES, ONE SET OF TOKENS. Components reference tokens, never literals,
+ * so the dark theme is a *token redefinition* — not a second set of classes.
+ * Every `--color-*` below keeps its MEANING in both themes (`accent` is always
+ * verified/approved, `alert` is always conflict/failure); only its value moves.
+ * Nothing in components changes to support dark. That is the whole reason the
+ * token discipline was worth keeping.
  */
 
 @import "tailwindcss";
+
+/* ── the dark variant ───────────────────────────────────────
+   Redefines Tailwind's built-in `dark` variant so a `dark:`
+   utility follows the same three states as the tokens below:
+   the OS when <html> carries no stamp, and the stamp when it
+   does. Token redefinition is the PRIMARY mechanism — reach
+   for a `dark:` utility only for something a token cannot
+   carry (an image swap, a gradient direction).             */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+}
 
 @theme {
   /* ── typefaces ─────────────────────────────────────────────
@@ -31,7 +56,13 @@
   /* ── text ────────────────────────────────────────────────── */
   --color-ink: #171a1d;    /* primary text + primary button bg */
   --color-ink-2: #4a5157;  /* body copy */
-  --color-ink-3: #868e95;  /* captions, labels, metadata */
+  /* Captions, labels, metadata. #868e95 measured 3.05:1 on canvas — every
+     caption, count pill, section heading and honesty line in the DEFAULT
+     theme failed AA, while the dark palette had already lifted the same rung
+     past it. Darkened to clear 4.5:1 on every ground it is used on
+     (canvas 4.96, subtle 5.23, surface 5.42, accent-soft 4.71, warn-soft
+     4.91, alert-soft 4.63), keeping the blue-grey bias of the original. */
+  --color-ink-3: #636b72;
 
   /* ── semantic: verified / approved / agreed ──────────────── */
   --color-accent: #1b5e4b;
@@ -97,17 +128,221 @@
 
   /* ── shadow ──────────────────────────────────────────────
      `action` belongs to exactly ONE element per screen.
-     If two things have it, one of them is wrong.              */
-  --shadow-action: 0 5px 15px rgb(23 26 29 / 0.20);
-  --shadow-action-hover: 0 8px 20px rgb(23 26 29 / 0.25);
-  --shadow-selected: 0 0 0 1px #171a1d;
-  --shadow-card: 0 2px 10px rgb(23 26 29 / 0.05);
-  --shadow-paper: 0 2px 12px rgb(0 0 0 / 0.11);
+     If two things have it, one of them is wrong.
+
+     Geometry lives here; COLOUR lives in the `--shadow-color-*`
+     slots below. Tailwind resolves a shadow's offsets at build
+     time — only the colour survives as a runtime `var()` — so
+     the slots are what the dark theme re-points. Same offsets
+     in both themes, different light.
+
+     `action` has two layers: a drop shadow for the edge, and a
+     halo that is transparent in light and an ink glow in dark
+     (the dominant action is a near-white `bg-ink` button, and
+     on a dark ground a dark shadow beneath it is invisible —
+     it has to lift by casting light instead).                 */
+  --shadow-action: 0 5px 15px var(--shadow-color-action),
+    0 4px 20px var(--shadow-color-action-halo);
+  --shadow-action-hover: 0 8px 20px var(--shadow-color-action-hover),
+    0 6px 26px var(--shadow-color-action-hover-halo);
+  --shadow-selected: 0 0 0 1px var(--color-ink);
+  --shadow-card: 0 2px 10px var(--shadow-color-card);
+  --shadow-paper: 0 2px 12px var(--shadow-color-paper);
 
   /* ── fixed layout widths ─────────────────────────────────── */
   --spacing-rail: 188px;   /* app nav */
   --spacing-queue: 392px;  /* findings queue column */
 }
+
+/* ── light chrome + shadow colour ────────────────────────────
+   Scrollbar thumbs and the colour slots the shadow tokens
+   above point at. Deliberately outside the `--color-*` and
+   `--shadow-*` namespaces: these are not colours a component
+   may reach for, so they generate no utility.                */
+:root {
+  --scrollbar-thumb: #d4d8db;
+  --scrollbar-thumb-hover: #bcc2c6;
+
+  --shadow-color-action: rgb(23 26 29 / 0.20);
+  --shadow-color-action-halo: transparent;
+  --shadow-color-action-hover: rgb(23 26 29 / 0.25);
+  --shadow-color-action-hover-halo: transparent;
+  --shadow-color-card: rgb(23 26 29 / 0.05);
+  --shadow-color-paper: rgb(0 0 0 / 0.11);
+}
+
+/* ══ DARK PALETTE ═══════════════════════════════════════════
+   Designed, not inverted.
+
+   Ground: canvas is the floor, subtle sits just above it, and
+   surface stays the raised plane — the same rank order as the
+   light theme, with a wider step because a dark ground needs
+   more separation to read as raised (surface:canvas is 1.22:1
+   here against 1.09:1 in light).
+
+   Ink ladder: preserved in shape, not mirrored in value. Light
+   runs 16.0 / 7.4 / 3.1 against canvas; dark runs 16.1 / 8.2 /
+   5.8. The metadata rung is deliberately lifted — on a dark
+   ground the light theme's 3.1:1 for `ink-3` would fall well
+   under AA, and captions carry the honesty copy ("3 claims
+   unverifiable"), which must stay readable.
+
+   Semantics: the three keep their hue identity and their
+   distance from each other. `accent` #1b5e4b is a dark green
+   that vanishes on a dark ground, so it is lightened and
+   desaturated until it reads as green-verified against canvas;
+   `warn` and `alert` get the same treatment, and each `-soft`
+   companion becomes a deep tint of its own hue rather than a
+   pale one, so a warn-soft row still reads as amber-tinted.
+   Confidence keeps its three-way legibility: accent ≥ 0.80,
+   warn 0.70–0.79, alert < 0.70 are separable by hue and by
+   lightness in both themes.
+
+   Every value lives HERE, unconditionally, on plain `:root`.
+   No colour is defined only inside a media query or an
+   attribute block — those blocks below only ever re-point an
+   existing token at one of these.                            */
+:root {
+  color-scheme: light;
+
+  /* surfaces */
+  --dark-canvas: #101316;
+  --dark-surface: #21262b;
+  --dark-subtle: #171b1f;
+
+  /* borders */
+  --dark-line: #333a40;
+  --dark-line-soft: #252a2f;
+  --dark-line-strong: #454d55;
+
+  /* text */
+  --dark-ink: #eceff1;
+  --dark-ink-2: #a5adb4;
+  --dark-ink-3: #889199;
+
+  /* verified / approved / agreed */
+  --dark-accent: #5cbf9d;
+  --dark-accent-soft: #142c25;
+
+  /* stale / caution / degraded */
+  --dark-warn: #d7ab5c;
+  --dark-warn-soft: #2e2512;
+  --dark-warn-line: #5c4a28;
+
+  /* conflict / failure */
+  --dark-alert: #e28a72;
+  --dark-alert-soft: #361d18;
+  --dark-alert-line: #61352b;
+
+  /* chrome */
+  --dark-scrollbar-thumb: #343b42;
+  --dark-scrollbar-thumb-hover: #4b545c;
+
+  /* shadow colour — `--shadow-action` is rgb(23 26 29 / 0.20)
+     in light, and a dark ink shadow is invisible on a dark
+     ground, so the dominant action lifts by casting light
+     instead: the drop layer goes deep black for the edge and
+     the halo layer becomes a low-opacity ink glow. The ambient
+     shadows stay black and get much deeper. `selected` needs
+     nothing here — it is `0 0 0 1px var(--color-ink)`, so the
+     selection ring follows ink to the light end of the ladder
+     on its own.                                               */
+  --dark-shadow-color-action: rgb(0 0 0 / 0.55);
+  --dark-shadow-color-action-halo: color-mix(in srgb, var(--dark-ink) 10%, transparent);
+  --dark-shadow-color-action-hover: rgb(0 0 0 / 0.65);
+  --dark-shadow-color-action-hover-halo: color-mix(in srgb, var(--dark-ink) 16%, transparent);
+  --dark-shadow-color-card: rgb(0 0 0 / 0.45);
+  --dark-shadow-color-paper: rgb(0 0 0 / 0.55);
+}
+
+/* ── state 1: no stamp on <html> → follow the OS ─────────────
+   `:not([data-theme="light"])` is what lets an explicit light
+   choice beat a dark OS. Both blocks below are unlayered, so
+   they win over the `@layer theme` defaults regardless of
+   source order.                                              */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --color-canvas: var(--dark-canvas);
+    --color-surface: var(--dark-surface);
+    --color-subtle: var(--dark-subtle);
+
+    --color-line: var(--dark-line);
+    --color-line-soft: var(--dark-line-soft);
+    --color-line-strong: var(--dark-line-strong);
+
+    --color-ink: var(--dark-ink);
+    --color-ink-2: var(--dark-ink-2);
+    --color-ink-3: var(--dark-ink-3);
+
+    --color-accent: var(--dark-accent);
+    --color-accent-soft: var(--dark-accent-soft);
+
+    --color-warn: var(--dark-warn);
+    --color-warn-soft: var(--dark-warn-soft);
+    --color-warn-line: var(--dark-warn-line);
+
+    --color-alert: var(--dark-alert);
+    --color-alert-soft: var(--dark-alert-soft);
+    --color-alert-line: var(--dark-alert-line);
+
+    --scrollbar-thumb: var(--dark-scrollbar-thumb);
+    --scrollbar-thumb-hover: var(--dark-scrollbar-thumb-hover);
+
+    --shadow-color-action: var(--dark-shadow-color-action);
+    --shadow-color-action-halo: var(--dark-shadow-color-action-halo);
+    --shadow-color-action-hover: var(--dark-shadow-color-action-hover);
+    --shadow-color-action-hover-halo: var(--dark-shadow-color-action-hover-halo);
+    --shadow-color-card: var(--dark-shadow-color-card);
+    --shadow-color-paper: var(--dark-shadow-color-paper);
+  }
+}
+
+/* ── state 2: data-theme="dark" → dark regardless of the OS ──
+   Same mapping, one specificity step above plain `:root` and
+   last in source order, so an explicit dark choice also beats
+   a light OS. It re-points tokens only; it defines no value.  */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-canvas: var(--dark-canvas);
+  --color-surface: var(--dark-surface);
+  --color-subtle: var(--dark-subtle);
+
+  --color-line: var(--dark-line);
+  --color-line-soft: var(--dark-line-soft);
+  --color-line-strong: var(--dark-line-strong);
+
+  --color-ink: var(--dark-ink);
+  --color-ink-2: var(--dark-ink-2);
+  --color-ink-3: var(--dark-ink-3);
+
+  --color-accent: var(--dark-accent);
+  --color-accent-soft: var(--dark-accent-soft);
+
+  --color-warn: var(--dark-warn);
+  --color-warn-soft: var(--dark-warn-soft);
+  --color-warn-line: var(--dark-warn-line);
+
+  --color-alert: var(--dark-alert);
+  --color-alert-soft: var(--dark-alert-soft);
+  --color-alert-line: var(--dark-alert-line);
+
+  --scrollbar-thumb: var(--dark-scrollbar-thumb);
+  --scrollbar-thumb-hover: var(--dark-scrollbar-thumb-hover);
+
+  --shadow-color-action: var(--dark-shadow-color-action);
+  --shadow-color-action-halo: var(--dark-shadow-color-action-halo);
+  --shadow-color-action-hover: var(--dark-shadow-color-action-hover);
+  --shadow-color-action-hover-halo: var(--dark-shadow-color-action-hover-halo);
+  --shadow-color-card: var(--dark-shadow-color-card);
+  --shadow-color-paper: var(--dark-shadow-color-paper);
+}
+
+/* ── state 3: data-theme="light" → light regardless of the OS.
+   Needs no block of its own: the light values on `:root` are
+   already the default, and the media query above excludes it. */
 
 /* ── base ──────────────────────────────────────────────────
    The app fills the viewport and never scrolls as a page.
@@ -142,18 +377,23 @@
   }
 }
 
+/* Firefox has no ::-webkit-scrollbar; it takes the same token. */
+html {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
 ::-webkit-scrollbar {
   width: 9px;
   height: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d4d8db;
+  background: var(--scrollbar-thumb);
   border-radius: 5px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #bcc2c6;
+  background: var(--scrollbar-thumb-hover);
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-track {

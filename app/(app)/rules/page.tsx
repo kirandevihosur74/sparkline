@@ -1,15 +1,22 @@
 /**
- * /rules — verification rules. Stub: the demo's thresholds are fixed in the
- * data layer, so there is nothing here to configure yet.
+ * /rules — the verification rules the workspace runs on.
+ *
+ * No longer a stub. The four rules and the policy line above them are real
+ * values from lib/data (getWorkspacePolicy / getVerificationRules) — they are
+ * the thresholds every verdict in the demo run came out of, so the screen
+ * shows them rather than admitting to an emptiness that is not true any more.
+ * What it still cannot do — edit them — it says in one line instead of
+ * rendering dead controls.
+ *
+ * Layout: the root layout's <main> is the flex column, so the policy strip is
+ * a shrink-0 header row and the rule list is the flex-1 `.scroll-col` beneath
+ * it. The page never scrolls.
  */
 
-import StubScreen from "@/components/StubScreen";
+import WorkspacePolicyPanel from "@/components/WorkspacePolicyPanel";
 
 export default function RulesPage() {
-  return (
-    <StubScreen
-      title="Verification rules"
-      detail="Designed to hold the thresholds that decide when a claim is held back as low-confidence, when a difference becomes a conflict, and when a figure counts as stale."
-    />
-  );
+  // The screen's own name, as StubScreen took it — the panel renders it as the
+  // document's sr-only h1, because ContextBar already prints it in the bar.
+  return <WorkspacePolicyPanel title="Verification rules" />;
 }

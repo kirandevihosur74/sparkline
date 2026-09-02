@@ -125,7 +125,8 @@ export async function signDecision(input: SignInput): Promise<AuditRecord> {
     throw new SignError("A rejection needs a reason", 400);
   }
 
-  const reviewer = input.reviewer?.trim() || currentReviewer();
+  const reviewer =
+    input.reviewer?.trim() || currentReviewer() || "an unidentified reviewer";
   const signedAt = new Date().toISOString();
   const reviewTitle = ensured.run.review.title ?? SAMPLE_REVIEW.title;
 

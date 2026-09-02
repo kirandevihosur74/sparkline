@@ -175,12 +175,17 @@ export default function ErrorPanel({
 
         {/* ── The button ─────────────────────────────────────────────── */}
         <div className="pt-1">
+          {/* Disabled is a colour pair, not just a background swap: `text-surface`
+              is the INVERSE of ink and only reads on `bg-ink`. Left on a
+              `line-strong` slab it was 1.5:1 in light and 1.8:1 in dark — the
+              primary fix with an unreadable label. `line` + `ink-2` keeps the
+              button's shape and clears AA in both themes. */}
           <button
             type="button"
             disabled={!onRetry}
             aria-label={`Re-run ${stageObject}`}
             onClick={() => onRetry?.()}
-            className={`rounded bg-ink px-3.5 py-2 text-body font-medium text-surface focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line-strong disabled:shadow-none ${
+            className={`rounded bg-ink px-3.5 py-2 text-body font-medium text-surface focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line disabled:text-ink-2 disabled:shadow-none ${
               dominant ? "shadow-action hover:shadow-action-hover" : ""
             }`}
           >

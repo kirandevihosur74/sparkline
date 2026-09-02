@@ -21,14 +21,24 @@
  *
  * Shadow discipline: exactly ONE element on the screen carries `shadow-action`,
  * and it is the primary action of whichever state is rendered — "Approve
- * finding" while the finding is open, "Next finding →" once it is resolved and
- * the approve button no longer exists. There is never more than one at a time.
+ * finding" while the finding is open; once it is resolved and the approve
+ * button no longer exists, "Next finding →" while another finding is still
+ * waiting, and "Open all reviews →" when none is. There is never more than one
+ * at a time, and never a dead one: the last sign-off of a run leads on to the
+ * reviews index rather than to a disabled button.
  *
  * Client component: it owns the reject-reason choice and the decision callbacks.
  */
 
+import Link from "next/link";
 import { useState } from "react";
-import type { AuditRecord, Finding, RejectReason } from "@/lib/data";
+import { getDecisionSignature } from "@/lib/data";
+import type {
+  AuditRecord,
+  DecisionSignature,
+  Finding,
+  RejectReason,
+} from "@/lib/data";
 import { formatUtc } from "@/lib/format";
 
 /**
@@ -37,6 +47,26 @@ import { formatUtc } from "@/lib/format";
  * its output, here the signature line.
  */
 const SIGNING_PROVIDER = "Nutrient DWS";
+
+/**
+ * Where the queue leads once nothing in it is open: the reviews index, the
+ * workspace's own list.
+ *
+ * This is a ROUTE, not a value — app/reviews/page.tsx exists and there is
+ * nothing in lib/data to read a path off. It deliberately carries no review
+ * id: the end of one run's queue belongs to the workspace, not back inside the
+ * run that was just finished. Any href that DOES name a review still takes
+ * that id from the data layer.
+ */
+const REVIEWS_HREF = "/reviews";
+
+/**
+ * The resolved strip's primary action, whichever it is. One class string so
+ * "Next finding →" and "Open all reviews →" cannot drift apart, and so the
+ * single `shadow-action` on this screen is written exactly once.
+ */
+const ONWARD_ACTION_CLASS =
+  "rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none";
 
 /**
  * Reject reasons, in the order they are offered. Copy is a design-system
@@ -68,9 +98,16 @@ export interface DecisionBarProps {
   /** The finding under review. `finding.status` drives which state renders. */
   finding: Finding;
   /**
-   * Who is signing — the deployment's reviewer, never a literal. In the
-   * pending state it is the "Signing as {name}" line; in the resolved state
-   * `record.reviewer` wins, because that is who actually signed.
+   * Who signed, for the RESOLVED strip — `AuditRecord.reviewer` from the data
+   * layer, never a literal, and `record.reviewer` wins over it when a record
+   * exists, because that is who actually put their name on this finding.
+   *
+   * The pending "Signing as" line no longer reads this: it comes off
+   * `signature` below, which resolves the signer from the ledger's last
+   * DECISION rather than its last row. ReviewWorkspace now stamps a decision
+   * taken in this session with `signature.name`, so the two agree — a bar that
+   * signs as one person and then confirms as another is one interaction
+   * contradicting itself.
    */
   reviewer: string;
   /**
@@ -79,6 +116,28 @@ export interface DecisionBarProps {
    * and the signed record's URL.
    */
   record?: AuditRecord;
+  /**
+   * The signature line for the pending state: who is signing, in what
+   * capacity, and where this finding sits in the queue —
+   * "Signing as M. Bui · Reviewer · finding 2 of 11".
+   *
+   * Every part is DERIVED in lib/data: the name and role off the run's ledger,
+   * the position off getFindings() in the order the queue renders it, so the
+   * line cannot drift from the queue beside it. It defaults to the demo run's;
+   * a caller on any other run must pass getDecisionSignature(finding.id,
+   * reviewId), because a signature is only true of the ledger it was read off.
+   *
+   * It is NOT the same answer as `reviewer` above. getSigningActor() skips
+   * countersignatures — the last row on the demo ledger is P. Ramanathan's
+   * endorsement, and the reviewer at the keyboard is M. Bui, who made the
+   * decision it endorses.
+   *
+   * TODO(schema-gap: session identity): none of this is a session. Identity
+   * reaches the frontend only through a row that has already been signed, so
+   * the signer is inferred from the ledger and the line says "an unidentified
+   * reviewer" when a run has signed nothing at all.
+   */
+  signature?: DecisionSignature;
   /** True while the signature is being made; the buttons wait. */
   signing?: boolean;
   /** Why the last signature attempt failed. The finding stays open. */
@@ -89,6 +148,12 @@ export interface DecisionBarProps {
   /** Always receives the chosen structured reason alongside the finding id. */
   onReject?: (findingId: string, reason: RejectReason) => void;
   onUndo?: (findingId: string) => void;
+  /**
+   * Advances to the next finding still open. ABSENT means there is no next
+   * one — the resolved strip then leads to the reviews index instead of
+   * offering a disabled button, because a run's final sign-off must not
+   * dead-end.
+   */
   onNext?: (findingId: string) => void;
 }
 
@@ -110,6 +175,7 @@ export default function DecisionBar({
   finding,
   reviewer,
   record,
+  signature = getDecisionSignature(finding.id),
   signing = false,
   signError,
   defaultRejectReason = DEFAULT_REJECT_REASON,
@@ -167,16 +233,36 @@ export default function DecisionBar({
 
         <div className="flex items-center justify-between gap-4 px-5 py-3">
           <div className="min-w-0">
+            {/*
+             * "Signing as M. Bui · Reviewer · finding 2 of 11 · Nutrient DWS".
+             * Built from the signature's PARTS rather than its joined `text` so
+             * the name can carry the emphasis and the rest stays metadata — the
+             * segments and their order are still the data layer's. A run that
+             * names nobody has no role and no actor, and the name is then the
+             * say-so copy; a finding outside this run's queue has no position,
+             * and the segment is left off rather than reported as zero. While
+             * Nutrient DWS is signing, the line says so instead.
+             */}
             <p aria-live="polite" className="text-body text-ink-2">
               {signing ? (
                 <>
                   Signing with{" "}
                   <span className="font-medium text-ink">{SIGNING_PROVIDER}</span>
-                  <span className="text-ink-3"> · as {reviewer}…</span>
+                  <span className="text-ink-3"> · as {signature.name}…</span>
                 </>
               ) : (
                 <>
-                  Signing as <span className="font-medium text-ink">{reviewer}</span>
+                  {signature.prefix}{" "}
+                  <span className="font-medium text-ink">{signature.name}</span>
+                  {signature.role ? (
+                    <span className="text-ink-3"> · {signature.role}</span>
+                  ) : null}
+                  {signature.position ? (
+                    <span className="tabular text-ink-3">
+                      {" "}
+                      · {signature.position.text}
+                    </span>
+                  ) : null}
                   <span className="text-ink-3"> · {SIGNING_PROVIDER}</span>
                 </>
               )}
@@ -303,6 +389,15 @@ export default function DecisionBar({
               {record.note}
             </p>
           ) : null}
+
+          {onNext ? null : (
+            /* The system says what is left: nothing. This was the last finding
+               in the queue waiting on a decision, which is why the action
+               beside it leaves the run. */
+            <p className="mt-1 text-caption text-ink-3">
+              Nothing else in this queue is waiting on a decision.
+            </p>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
@@ -317,16 +412,28 @@ export default function DecisionBar({
 
           {/*
            * With the finding resolved there is no Approve button, so the strip's
-           * primary action carries the single shadow-action on the screen.
+           * primary action carries the single shadow-action on the screen —
+           * exactly one of these two renders, so there is still only one.
+           *
+           * Which one is not a style choice: while another finding is open the
+           * work continues inside this run, and when none is, the only true
+           * onward step is out of it. The old build rendered the same button
+           * disabled at the end of the queue, which ended the demo on a
+           * control that could not be pressed.
            */}
-          <button
-            type="button"
-            disabled={!onNext}
-            onClick={() => onNext?.(finding.id)}
-            className="rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line-strong disabled:shadow-none"
-          >
-            Next finding →
-          </button>
+          {onNext ? (
+            <button
+              type="button"
+              onClick={() => onNext(finding.id)}
+              className={ONWARD_ACTION_CLASS}
+            >
+              Next finding →
+            </button>
+          ) : (
+            <Link href={REVIEWS_HREF} className={ONWARD_ACTION_CLASS}>
+              Open all reviews →
+            </Link>
+          )}
         </div>
       </div>
     </div>

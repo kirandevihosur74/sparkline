@@ -42,7 +42,11 @@ export const SAMPLE_REVIEW = {
     "250 MW distributed solar · expansion tranche diligence · Halcyon Infrastructure Partners",
 };
 
-/** Who signs decisions in this deployment. Set SPARKLINE_REVIEWER in .env.local. */
-export function currentReviewer(): string {
-  return process.env.SPARKLINE_REVIEWER?.trim() || "Demo reviewer";
+/**
+ * Who signs decisions in this deployment, when SPARKLINE_REVIEWER is set in
+ * .env.local. Undefined otherwise — the review workspace then resolves the
+ * signer from the run's own ledger rather than inventing a name.
+ */
+export function currentReviewer(): string | undefined {
+  return process.env.SPARKLINE_REVIEWER?.trim() || undefined;
 }

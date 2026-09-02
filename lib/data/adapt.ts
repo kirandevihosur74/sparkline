@@ -357,6 +357,9 @@ export function adaptRun(stored: StoredRun): RunData {
     auditRecords: [],
     stages,
     events,
+    // A live run is a review the workspace holds; nobody is assigned until a
+    // backend can say so.
+    listed: true,
   };
 }
 

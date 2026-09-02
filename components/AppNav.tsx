@@ -23,7 +23,10 @@
  * module with no server-only imports, so it resolves in the client bundle.
  *
  * The page never scrolls: the rail is a min-h-0 flex column whose nav list
- * carries .scroll-col, so a short viewport scrolls the rows, not the app.
+ * carries .scroll-col, so a short viewport scrolls the rows, not the app. The
+ * theme control is pinned below that list — a preference belongs under the
+ * last section, not inside one — and is shrink-0, so it cannot be scrolled
+ * away and cannot push the rail past the viewport.
  *
  * The SECTIONS table below is also the one place a route's NAME is written:
  * ContextBar titles every workspace screen from it (via `navRouteName`), so
@@ -32,10 +35,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import ThemeToggle from "./ThemeToggle";
 import {
   DEMO_REVIEW_ID,
   getAuditRecords,
-  getCoverage,
+  getWorkspaceReviews,
   getDocuments,
 } from "@/lib/data";
 
@@ -93,7 +97,7 @@ const SECTIONS: NavSection<NavRoute>[] = [
     items: [
       { label: "Dashboard", href: "/dashboard" },
       { label: "New review", href: NEW_REVIEW_HREF },
-      { label: "Reviews", href: REVIEWS_HREF, countLabel: "open findings" },
+      { label: "Reviews", href: REVIEWS_HREF, countLabel: "reviews" },
       { label: "Documents", href: DOCUMENTS_HREF, countLabel: "documents" },
       // No count: nothing in the data layer enumerates live sources
       // workspace-wide, and an invented number is worse than none.
@@ -128,9 +132,14 @@ const HREFS = SECTIONS.flatMap((section) =>
  */
 function countFor(href: string): number | undefined {
   switch (href) {
-    // Findings still awaiting a decision: the work the Reviews screen holds.
+    // Reviews in the workspace — the rows the Reviews screen actually renders.
+    // This was the demo run's open-finding count while the workspace WAS one
+    // project; a list of six reviews made that number false in two ways at
+    // once (it is not a review count, and it is not the workspace's open
+    // findings either — those total 17 across three reviews). Counting the
+    // same accessor the index renders is the only reading that cannot drift.
     case REVIEWS_HREF:
-      return getCoverage(DEMO_REVIEW_ID).open;
+      return getWorkspaceReviews().length;
     case DOCUMENTS_HREF:
       return getDocuments(DEMO_REVIEW_ID).length;
     // Signed decisions are exactly the rows the audit ledger renders.
@@ -219,6 +228,12 @@ export default function AppNav() {
           </section>
         ))}
       </div>
+
+      {/* A preference, not a destination — so it sits below the last section
+          rather than inside one. shrink-0 keeps it pinned at the foot of the
+          rail: the row list above scrolls, the rail does not grow, and the
+          page still never scrolls. */}
+      <ThemeToggle />
     </nav>
   );
 }

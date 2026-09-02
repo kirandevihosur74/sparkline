@@ -7,11 +7,31 @@
  * hold, admits it is outside the demo spine, and points back at the one review
  * that is real.
  *
- * Server component. Token-pure: 1px --color-line borders, no icons, no shadow
- * (shadow-action belongs to a primary action, and a stub has none).
+ * THE SCREEN IS NAMED ONCE. ContextBar already puts the screen's name at the
+ * head of the main column, read off the nav row that reached it
+ * (navRouteName). Printing the same words again as a display-size h1 six
+ * pixels below made every stub read as if the title had been pasted twice, so
+ * the visible h1 is rendered ONLY on a path the nav does not name — today just
+ * the unlinked /settings, which would otherwise arrive with no name at all.
+ * Everywhere else the heading stays in the document outline as `sr-only`: the
+ * structure a screen reader walks is unchanged, only the duplicate ink is
+ * gone. The test is the same source of truth ContextBar uses, so the two can
+ * never disagree about which screen has already been named.
+ *
+ * Client component for exactly that test — which path you are on is only
+ * knowable from usePathname, and layouts do not re-render on navigation. Every
+ * value still comes from lib/data, which resolves in the client bundle exactly
+ * as AppNav and ContextBar already rely on.
+ *
+ * Token-pure: 1px --color-line borders, no icons, no shadow (shadow-action
+ * belongs to a primary action, and a stub has none).
  */
 
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { navRouteName } from "./AppNav";
 import { DEMO_REVIEW_ID, getReview } from "@/lib/data";
 
 export default function StubScreen({
@@ -34,12 +54,22 @@ export default function StubScreen({
   // endpoints, so the demo review comes from lib/data or not at all.
   const review = getReview(DEMO_REVIEW_ID);
 
+  const pathname = usePathname();
+  // Has the header already said this screen's name? Same matcher, same table.
+  const namedInBar = navRouteName(pathname) === title;
+
   return (
     <section className="scroll-col flex flex-1 items-center justify-center p-8">
       <div className="w-full max-w-lg rounded border border-line bg-surface p-6">
         <p className="text-micro uppercase text-ink-3">Designed, not built</p>
 
-        <h1 className="mt-2 text-display font-semibold text-ink">{title}</h1>
+        <h1
+          className={
+            namedInBar ? "sr-only" : "mt-2 text-display font-semibold text-ink"
+          }
+        >
+          {title}
+        </h1>
 
         <p className="mt-3 text-body text-ink-2">{detail}</p>
 

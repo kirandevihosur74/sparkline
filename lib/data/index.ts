@@ -56,6 +56,52 @@ export type {
   ScoredTrustBreakdown,
   UnscoredTrustBreakdown,
   TrustScoreBreakdown,
+  // Actors — WHO did the work and in what capacity
+  // (fixture-only — TODO(schema-gap: ReviewRecord))
+  ActorId,
+  ActorRole,
+  Actor,
+  Countersignature,
+  LedgerSummary,
+  // Scale signals — this run as part of something larger. Every number in
+  // these shapes is counted off the fixture run registry; nothing in them is
+  // typed in (view-models only — TODO(schema-gap: Workspace))
+  WorkspaceStat,
+  WorkspaceSummary,
+  // The review portfolio — the rows the reviews index renders. Six today: the
+  // demo run, which opens, plus five scenery reviews, which say they do not.
+  // (view-models only — TODO(schema-gap: Workspace))
+  WorkspaceReviewState,
+  WorkspaceReviewCounts,
+  WorkspaceWaitState,
+  WorkspaceReviewWait,
+  WorkspaceReviewScore,
+  WorkspaceReviewScoreUnavailable,
+  WorkspaceReviewTrust,
+  WorkspaceReviewRow,
+  FindingsHeader,
+  FindingsFooter,
+  FindingPosition,
+  DecisionSignature,
+  // The findings queue filter — all findings / assigned to me / unassigned.
+  // Assignment is authored in fixtures.ts and "me" is the decision bar's own
+  // signing actor (TODO(schema-gap: assignment) — the backend names an actor
+  // only on a signed record, and has no column for an unsigned finding's queue)
+  FindingQueueFilterId,
+  QueueFilterUnresolved,
+  CountedFindingQueueFilter,
+  UnresolvedFindingQueueFilter,
+  FindingQueueFilter,
+  FindingQueue,
+  FindingAssignment,
+  // Trust formula — the arithmetic under the dial, computed from the bars
+  TrustFormulaTerm,
+  TrustFormula,
+  // Workspace policy — TODO(schema-gap: VerificationRule)
+  VerificationRule,
+  WorkspacePolicy,
+  // Compliance copy
+  ComplianceCopy,
   RunData,
 } from "./types";
 
@@ -77,5 +123,29 @@ export {
   getEvents,
   getCoverage,
   getDocumentAvgConfidence,
+  // Actors and signatures
+  getActors,
+  getActor,
+  getRecordActor,
+  getPipelineOwner,
+  getSigningActor,
+  getDecisionSignature,
+  getLedgerSummary,
+  // Scale signals
+  getWorkspaceSummary,
+  getWorkspaceReviews,
+  getFindingsHeader,
+  getFindingsFooter,
+  getFindingPosition,
+  // Queue filter — counts derived from the findings, "me" from getSigningActor
+  getFindingAssignment,
+  getFindingQueue,
+  getQueueFindings,
+  // Trust formula
+  getTrustFormula,
+  // Workspace policy and compliance copy
+  getVerificationRules,
+  getWorkspacePolicy,
+  getComplianceCopy,
   getFixtureRun,
 } from "./fixtures";

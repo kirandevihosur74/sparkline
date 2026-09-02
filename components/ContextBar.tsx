@@ -37,7 +37,7 @@
 import { usePathname } from "next/navigation";
 import { APP_NAME, navRouteName } from "./AppNav";
 import ProjectBar, { WorkspaceBar } from "./ProjectBar";
-import { DEMO_REVIEW_ID, getReview } from "@/lib/data";
+import { getReview } from "@/lib/data";
 
 /** The one path shape whose screen has no title of its own. */
 const REVIEWS_SEGMENT = "reviews";
@@ -61,12 +61,14 @@ export default function ContextBar() {
   const pathname = usePathname();
 
   const reviewId = reviewIdInPath(pathname);
-  // Same fallback the review screen itself applies to an unknown id, so the
-  // bar cannot name a different run from the one on screen.
-  const review =
-    reviewId === undefined
-      ? undefined
-      : (getReview(reviewId) ?? getReview(DEMO_REVIEW_ID));
+  // NO FALLBACK, for the same reason /reviews/[id]/review has none: an id the
+  // data layer does not know is not the demo run. The bar used to resolve an
+  // unknown id to DEMO_REVIEW_ID, so the screen that says "no run with this id
+  // exists" carried "Wrenfield Residential Solar Portfolio" above it — a real
+  // project named as the subject of a page reporting it has nothing to show.
+  // Unknown now falls through to the workspace bar below, which titles the
+  // screen from the nav row that reached it.
+  const review = reviewId === undefined ? undefined : getReview(reviewId);
 
   if (review) return <ProjectBar label={review.title} />;
 
