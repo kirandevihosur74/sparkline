@@ -23,7 +23,10 @@
  * module with no server-only imports, so it resolves in the client bundle.
  *
  * The page never scrolls: the rail is a min-h-0 flex column whose nav list
- * carries .scroll-col, so a short viewport scrolls the rows, not the app.
+ * carries .scroll-col, so a short viewport scrolls the rows, not the app. The
+ * theme control is pinned below that list — a preference belongs under the
+ * last section, not inside one — and is shrink-0, so it cannot be scrolled
+ * away and cannot push the rail past the viewport.
  *
  * The SECTIONS table below is also the one place a route's NAME is written:
  * ContextBar titles every workspace screen from it (via `navRouteName`), so
@@ -32,6 +35,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import ThemeToggle from "./ThemeToggle";
 import {
   DEMO_REVIEW_ID,
   getAuditRecords,
@@ -224,6 +228,12 @@ export default function AppNav() {
           </section>
         ))}
       </div>
+
+      {/* A preference, not a destination — so it sits below the last section
+          rather than inside one. shrink-0 keeps it pinned at the foot of the
+          rail: the row list above scrolls, the rail does not grow, and the
+          page still never scrolls. */}
+      <ThemeToggle />
     </nav>
   );
 }

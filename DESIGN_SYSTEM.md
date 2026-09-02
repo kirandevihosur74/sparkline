@@ -42,6 +42,65 @@ The rule governs *state* only, and two left rules are explicitly allowed because
 
 Color never carries meaning alone. Every state also has a text label.
 
+**A token is a meaning, not a value.** The table above is the whole contract:
+`accent` means verified in every theme, `warn` means stale in every theme,
+`alert` means conflict in every theme. What moves between light and dark is only
+the value behind the name — the dark palette lightens and desaturates each
+semantic so it survives a dark ground, and the three stay distinguishable from
+each other and from `ink`. A component that reads "green" or "brick" off the
+screen and hard-codes it has broken the contract; a component that asks for
+`accent` has not.
+
+So: **components reference tokens, never literals.** No hex, no `rgb()`, no
+stock Tailwind palette color (`zinc-500`, `amber-600`) in a component — those
+have no dark counterpart and will not follow the theme. Every color a component
+draws comes from a `--color-*` token in `app/theme.css`, which is why the entire
+component tree renders correctly in dark without a single edit. `app/theme.css`
+remains the only file that states a color value.
+
+---
+
+## Theme
+
+Two themes, one set of tokens. The dark theme is a **token redefinition** in
+`app/theme.css` — the same `--color-*` names re-pointed at dark values — not a
+second set of classes and not a second stylesheet. Nothing in the component tree
+knows which theme is running.
+
+**Three states**, resolved on the `<html>` element:
+
+| `<html>` | Result |
+|---|---|
+| no `data-theme` attribute | Follow the OS — `prefers-color-scheme` decides |
+| `data-theme="light"` | Light, even when the OS is dark |
+| `data-theme="dark"` | Dark, even when the OS is light |
+
+An explicit choice beats the OS **in both directions**; that is the point of
+having a stamp at all. Un-stamping the root returns to following the OS, so
+"System" is a real third position, not the absence of a setting.
+
+Structural rule: no color is defined *only* inside a media query or an attribute
+block. Both palettes sit unconditionally on `:root`; the OS block and the
+`data-theme` block contain nothing but re-pointings. A value you cannot find by
+reading `:root` does not exist.
+
+**`dark:` utilities are the exception, not the route.** A `dark` variant is
+defined and follows the same three states, but reach for it only for something a
+token genuinely cannot carry — an image swap, a gradient direction. Anything
+expressible as a color belongs in a token.
+
+**Shadows are themed too.** Geometry is shared; color is not. A dark ink shadow
+is invisible on a dark ground, so in dark the single `shadow-action` element
+lifts by casting light rather than by dropping shade — the "exactly one dominant
+action per screen" rule reads the same in both themes. Scrollbar chrome follows
+the theme by the same mechanism.
+
+**The toggle is text.** There are no icons in this system, so the theme control
+is never a sun, a moon, or a half-filled circle — it is the words for the three
+states, at the weight ceiling like everything else, and the label names the state
+it selects. Per the honesty rule, "System" may not claim to be Light or Dark: it
+reports what it is, and the OS decides what that means.
+
 ---
 
 ## Confidence
@@ -94,7 +153,7 @@ muted so it is not read as a completed `accent` fill.
 Ordered by how often they recur. Build in this order.
 
 ### 1. `AppNav`
-Light rail (`subtle` bg, `line` right border). Sections: Workspace / Record / Settings. Active item gets white background, `accent` left rule, weight 500.
+Low-key rail (`subtle` bg, `line` right border). Sections: Workspace / Record / Settings. Active item gets a `surface` background, `accent` left rule, weight 500.
 
 *Props:* `items`, `activeId`, `counts`
 

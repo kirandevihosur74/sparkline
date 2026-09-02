@@ -167,7 +167,13 @@ export default function NewReviewComposer({
           <button
             type="button"
             disabled
-            className="rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line-strong disabled:shadow-none"
+            /* Disabled is a COLOUR PAIR, not just a background swap: `text-surface`
+               is the inverse of ink and only reads on `bg-ink`. Left on a
+               `line-strong` slab the label measured 1.52:1 in light and 1.78:1
+               in dark — an unreadable primary action. `line` + `ink-2` keeps
+               the button's shape and clears AA in both themes (6.43:1 / 5.07:1),
+               the same pair ErrorPanel's disabled retry already uses. */
+            className="rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line disabled:text-ink-2 disabled:shadow-none"
           >
             Run analysis
           </button>

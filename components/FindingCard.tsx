@@ -17,8 +17,23 @@
  *
  * `Finding` is the discriminated union from lib/data — every read of a value
  * goes through a switch on `verdict`, never off the shared base.
+ *
+ * ASSIGNMENT. The last line of the card says whose queue this finding sits in,
+ * and it is never blank: a finding nobody holds says so in words, because an
+ * empty slot would read as a rendering gap rather than as the answer. The copy
+ * comes from getFindingAssignment(), so the card and the queue's
+ * "Assigned to me" filter are reading one function — see
+ * TODO(schema-gap: assignment) on Finding.assignee, which is why an unsigned
+ * finding's owner is a fixture's opinion and not a column the backend has.
+ *
+ * It stays on a RESOLVED card too. Assignment says who owed the finding a
+ * decision, which is a different fact from who signed it — the resolved line
+ * above already points at the audit trail for the signer — and dropping it
+ * would leave a card the "Assigned to me" filter kept with nothing on it
+ * saying why.
  */
 
+import { getFindingAssignment } from "@/lib/data";
 import type { ClaimVerdict, Finding } from "@/lib/data";
 
 interface FindingCardProps {
@@ -116,6 +131,7 @@ export default function FindingCard({
 }: FindingCardProps) {
   const verdict = VERDICT[finding.verdict];
   const view = valueView(finding);
+  const assignment = getFindingAssignment(finding);
   const resolved = finding.status !== "open";
   const approved = finding.status === "approved";
 
@@ -204,6 +220,11 @@ export default function FindingCard({
           {finding.summary}
         </p>
       ) : null}
+
+      {/* Quiet, and always present: "Assigned to M. Bui · Reviewer", or the
+          unassigned sentence. Same tone either way — the words carry it, and
+          there is no dot, chip or rule to make an owner look like a state. */}
+      <p className="mt-2 text-caption text-ink-3">{assignment.text}</p>
     </button>
   );
 }

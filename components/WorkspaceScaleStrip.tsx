@@ -61,7 +61,7 @@ export default function WorkspaceScaleStrip({
         {summary.stats.map((stat, index) => (
           <span key={stat.label} className="flex items-baseline gap-1.5">
             {index > 0 ? (
-              <span aria-hidden className="text-line-strong">
+              <span aria-hidden className="text-ink-3">
                 ·
               </span>
             ) : null}

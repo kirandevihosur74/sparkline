@@ -54,6 +54,12 @@ import type {
   FindingsFooter,
   FindingPosition,
   DecisionSignature,
+  FindingQueue,
+  FindingQueueFilter,
+  FindingQueueFilterId,
+  CountedFindingQueueFilter,
+  QueueFilterUnresolved,
+  FindingAssignment,
   TrustFormula,
   TrustFormulaTerm,
   VerificationRule,
@@ -353,6 +359,58 @@ const queryTraces: QueryTrace[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Workspace actors — WHO did the work, and in what capacity.
+//
+// TODO(schema-gap: ReviewRecord): the backend records identity as ONE free
+// string, `ReviewRecord.reviewer`. There is no actor entity, no role, and no
+// countersignature link, so nothing below survives a round trip through the
+// contract today. See the full statement on Actor in lib/data/types.ts.
+//
+// Three people, three capacities, deliberately not interchangeable: K. Shah
+// executed the analysis run and signs nothing; M. Bui reviews and signs;
+// P. Ramanathan countersigns what M. Bui signs. Attributing every record to
+// "M. Bui" — which is what a single free string forces — is what made this
+// read like one person's notebook.
+// ---------------------------------------------------------------------------
+
+const actors = {
+  bui: {
+    id: "actor-bui",
+    initials: "MB",
+    name: "M. Bui",
+    role: "Reviewer",
+  },
+  shah: {
+    id: "actor-shah",
+    initials: "KS",
+    name: "K. Shah",
+    role: "Pipeline owner",
+  },
+  ramanathan: {
+    id: "actor-ramanathan",
+    initials: "PR",
+    name: "P. Ramanathan",
+    role: "Approver",
+  },
+} satisfies Record<string, Actor>;
+
+/** Roster order: reviewer, pipeline owner, approver. */
+const actorList: readonly Actor[] = [actors.bui, actors.shah, actors.ramanathan];
+
+const actorsById: Record<ActorId, Actor> = {
+  "actor-bui": actors.bui,
+  "actor-shah": actors.shah,
+  "actor-ramanathan": actors.ramanathan,
+};
+
+/**
+ * Why a second signature exists at all. Workspace policy, not a per-run fact —
+ * the same sentence explains every countersignature row on every ledger.
+ */
+const COUNTERSIGNATURE_POLICY =
+  "Decisions on high and critical findings carry a second signature from an approver.";
+
+// ---------------------------------------------------------------------------
 // Findings — one entry per verification outcome, in queue order (flags first,
 // by materiality). getCoverage() counts THESE, not claims: a finding is an
 // outcome, and one cross-document contradiction consumes two claims to produce
@@ -363,6 +421,28 @@ const queryTraces: QueryTrace[] = [
 // 2 unverified — lands here as 11 FINDINGS: 1 conflicting (claims a1 + b1
 // collapse into the single expansion-cost contradiction), 1 stale,
 // 1 corroborated, 5 consistent, 1 review-required, 2 unverified.
+//
+// ASSIGNMENT — TODO(schema-gap: assignment). Every `assignee` below is
+// AUTHORED HERE and derived from nothing: the backend names an actor only on a
+// SIGNED ReviewRecord, so whose queue an unsigned finding sits in is
+// unrepresentable in lib/types.ts (the full statement is on Finding.assignee
+// in lib/data/types.ts). The split reads 5 / 4 / 2:
+//
+//   M. Bui, Reviewer (5) — everything she has already put a signature on or is
+//     on the hook for. Both flags (the CRITICAL staleness and the HIGH
+//     contradiction) plus the warranty rejection are hers on the ledger
+//     already, and the two remaining Freedom Forever claims — counterparty
+//     scale, and the date of the agreement with that counterparty — turn on
+//     the same Chapter 11 event, so they sit with the reviewer who signed it.
+//   P. Ramanathan, Approver (4) — the four cross-document agreement checks, as
+//     two pairs: both halves of portfolio capacity and both halves of the
+//     commercial operation date. One actor holds both sides of a pair, so
+//     nobody is asked to confirm an agreement they can only see half of.
+//   Nobody (2) — the two private assumptions (module design, O&M cost). They
+//     carry the `unverified` verdict because no verification strategy exists
+//     for them, so there is nothing yet for a named reviewer to decide, and
+//     naming one would invent work. `undefined` here is the answer, not a
+//     gap in the fixture.
 // ---------------------------------------------------------------------------
 
 const contradictionFinding: ContradictionFinding = {
@@ -370,6 +450,7 @@ const contradictionFinding: ContradictionFinding = {
   verdict: "conflicting",
   label: "Expansion installation cost",
   materiality: "high",
+  assignee: actors.bui,
   status: contradictionFlag.status,
   summary:
     "The memo and the independent engineer price the same expansion program $25M apart \u2014 13.4% of the memo figure, and the gap lands entirely on sponsor equity. The IE number is built bottom-up from current labor rates, observed equipment pricing and mobilization costs; the memo shows no basis for its own.",
@@ -394,6 +475,7 @@ const stalenessFinding: StalenessFinding = {
   verdict: "stale",
   label: "Counterparty standing",
   materiality: "critical",
+  assignee: actors.bui,
   status: stalenessFlag.status,
   summary:
     "The memo is dated March 20, 2026 and records the master installation agreement as in good standing; Freedom Forever LLC filed a voluntary Chapter 11 petition on April 15, 2026. The memo was accurate when written \u2014 what changed is the world, and everything resting on the installer moves with it: the expansion schedule and the 25-year workmanship warranty.",
@@ -412,6 +494,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "corroborated",
     label: "Counterparty scale",
     materiality: "medium",
+    assignee: actors.bui,
     status: "open",
     claim: claims.a5,
     source: {
@@ -427,6 +510,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Portfolio capacity",
     materiality: "low",
+    assignee: actors.ramanathan,
     status: "open",
     claim: claims.a2,
     source: {
@@ -442,6 +526,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Portfolio capacity (IE verification)",
     materiality: "low",
+    assignee: actors.ramanathan,
     status: "open",
     claim: claims.b2,
     source: {
@@ -457,6 +542,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Commercial operation target",
     materiality: "low",
+    assignee: actors.ramanathan,
     status: "open",
     claim: claims.a3,
     source: {
@@ -471,6 +557,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Commercial operation (IE schedule)",
     materiality: "low",
+    assignee: actors.ramanathan,
     status: "open",
     claim: claims.b3,
     source: {
@@ -486,6 +573,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Agreement execution date",
     materiality: "low",
+    assignee: actors.bui,
     status: "open",
     claim: claims.a7,
     source: {
@@ -501,6 +589,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "review_required",
     label: "Workmanship warranty",
     materiality: "high",
+    assignee: actors.bui,
     status: "rejected",
     claim: claims.a6,
     source: {
@@ -564,58 +653,6 @@ const trustScore: TrustScore = {
       formula:
         "Start at 100, subtract materiality-weighted penalties for each conflicting, stale, or review-required claim, then scale by average extraction confidence.",
 };
-
-// ---------------------------------------------------------------------------
-// Workspace actors — WHO did the work, and in what capacity.
-//
-// TODO(schema-gap: ReviewRecord): the backend records identity as ONE free
-// string, `ReviewRecord.reviewer`. There is no actor entity, no role, and no
-// countersignature link, so nothing below survives a round trip through the
-// contract today. See the full statement on Actor in lib/data/types.ts.
-//
-// Three people, three capacities, deliberately not interchangeable: K. Shah
-// executed the analysis run and signs nothing; M. Bui reviews and signs;
-// P. Ramanathan countersigns what M. Bui signs. Attributing every record to
-// "M. Bui" — which is what a single free string forces — is what made this
-// read like one person's notebook.
-// ---------------------------------------------------------------------------
-
-const actors = {
-  bui: {
-    id: "actor-bui",
-    initials: "MB",
-    name: "M. Bui",
-    role: "Reviewer",
-  },
-  shah: {
-    id: "actor-shah",
-    initials: "KS",
-    name: "K. Shah",
-    role: "Pipeline owner",
-  },
-  ramanathan: {
-    id: "actor-ramanathan",
-    initials: "PR",
-    name: "P. Ramanathan",
-    role: "Approver",
-  },
-} satisfies Record<string, Actor>;
-
-/** Roster order: reviewer, pipeline owner, approver. */
-const actorList: readonly Actor[] = [actors.bui, actors.shah, actors.ramanathan];
-
-const actorsById: Record<ActorId, Actor> = {
-  "actor-bui": actors.bui,
-  "actor-shah": actors.shah,
-  "actor-ramanathan": actors.ramanathan,
-};
-
-/**
- * Why a second signature exists at all. Workspace policy, not a per-run fact —
- * the same sentence explains every countersignature row on every ledger.
- */
-const COUNTERSIGNATURE_POLICY =
-  "Decisions on high and critical findings carry a second signature from an approver.";
 
 // ---------------------------------------------------------------------------
 // Audit ledger — 2 signed decisions, each countersigned: 4 rows across
@@ -909,6 +946,11 @@ const degradedContradictionFinding: ContradictionFinding = {
  * The three stranded claims. Each is "unverified" — the verdict that means "no
  * verification strategy completed" — and each note names the consequence
  * (unconfirmed) before the cause (the refused query).
+ *
+ * All three are assigned to M. Bui, on the same reasoning as the happy path:
+ * they are the Freedom Forever cluster, and it is one counterparty question.
+ * A stranded finding still belongs in somebody's queue — a refused query
+ * changes what is known about the claim, not who owes it a decision.
  */
 const degradedUncheckedFindings: ClaimFinding[] = [
   {
@@ -916,6 +958,7 @@ const degradedUncheckedFindings: ClaimFinding[] = [
     verdict: "unverified",
     label: "Counterparty standing",
     materiality: "critical",
+    assignee: actors.bui,
     status: "open",
     claim: claims.a4,
     source: {
@@ -933,6 +976,7 @@ const degradedUncheckedFindings: ClaimFinding[] = [
     verdict: "unverified",
     label: "Workmanship warranty",
     materiality: "high",
+    assignee: actors.bui,
     status: "open",
     claim: claims.a6,
     source: {
@@ -950,6 +994,7 @@ const degradedUncheckedFindings: ClaimFinding[] = [
     verdict: "unverified",
     label: "Counterparty scale",
     materiality: "medium",
+    assignee: actors.bui,
     status: "open",
     claim: claims.a5,
     source: {
@@ -966,6 +1011,11 @@ const degradedUncheckedFindings: ClaimFinding[] = [
  * Findings carried over intact from the happy path: every claim the failure did
  * not touch keeps the verdict that extraction and comparison produced. Status is
  * forced open because no decision was signed in this run.
+ *
+ * `assignee` carries over untouched with the spread. Assignment is not an
+ * outcome of the run — it says who owes the finding a decision, which the
+ * refused live check did not change — so the same actors hold the same work
+ * here as on the happy path, and the same two private assumptions hold nobody.
  */
 const degradedCarriedFindings: ClaimFinding[] = claimFindings
   .filter((finding) => !UNCHECKED_CLAIM_IDS.includes(finding.claim.id))
@@ -975,6 +1025,13 @@ const degradedCarriedFindings: ClaimFinding[] = claimFindings
  * 11 findings again — 12 claims, with a1 + b1 collapsing into the one
  * contradiction — but the live-check outcomes are gone: 1 conflicting,
  * 5 consistent, 5 unverified. Queue order is materiality first.
+ *
+ * The assignment split is 5 / 4 / 2 here too — M. Bui holds the contradiction,
+ * the agreement date and all three stranded Freedom Forever findings;
+ * P. Ramanathan holds the same four cross-document pairs; the two private
+ * assumptions are unassigned. What this run cannot say is which of those five
+ * are "mine": it signed no decision, so nothing names who is at the keyboard.
+ * See getFindingQueue().
  */
 const degradedFindings: Finding[] = [
   degradedUncheckedFindings[0],
@@ -2310,6 +2367,157 @@ export function getFindingPosition(
     total: queue.length,
     text: `finding ${index + 1} of ${queue.length}`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// The findings queue filter — all findings / assigned to me / unassigned
+//
+// TODO(schema-gap: assignment): both halves of "assigned to me" are
+// frontend-only. The assignments are AUTHORED on the findings above (see
+// Finding.assignee in lib/data/types.ts: the backend names an actor only on a
+// signed ReviewRecord and has no column for whose queue an unsigned finding is
+// in). "Me" is resolved by getSigningActor() — the same call
+// getDecisionSignature() makes — so the filter and the decision bar cannot
+// name two different people.
+//
+// The COUNTS, unlike the assignments, are derived: every one is read off
+// getFindings() on the call, so a filter reports what it would actually leave.
+// ---------------------------------------------------------------------------
+
+/** The three chips, in render order. Copy, so no component types it. */
+const QUEUE_FILTER_LABEL: Record<FindingQueueFilterId, string> = {
+  all: "All findings",
+  mine: "Assigned to me",
+  unassigned: "Unassigned",
+};
+
+const ASSIGNED_PREFIX = "Assigned to";
+
+/** What a finding that names nobody says. Not a blank cell, and not a zero. */
+const UNASSIGNED_FINDING = "Unassigned — this finding names no reviewer";
+
+/**
+ * What "assigned to me" says on a run that has signed nothing — the degraded
+ * run's case.
+ *
+ * The honest reading is NOT "none of these are yours". Five of the degraded
+ * run's findings are assigned to a named reviewer; what is missing is any way
+ * to know whether that reviewer is the person looking at the screen, because
+ * identity reaches this app only through a signature and this run has none.
+ * So the filter reports that it cannot be resolved, carries no count, and says
+ * why — the same absence, in the same words, that the decision bar reports
+ * when it signs as an unidentified reviewer. A 0 here would be a claim about
+ * the reviewer's workload that nothing in this run can support.
+ */
+const UNRESOLVED_ME: QueueFilterUnresolved = {
+  headline: "Not resolvable",
+  reason:
+    "This run cannot say which findings are yours — no decision has been signed on it, so nothing names who is at the keyboard. Findings here are assigned; who you are is what is missing.",
+};
+
+/** The assignment line on one finding: "Assigned to M. Bui · Reviewer". */
+export function getFindingAssignment(finding: Finding): FindingAssignment {
+  const actor = finding.assignee;
+  return {
+    actor,
+    assigned: actor !== undefined,
+    text: actor
+      ? joinSegments([`${ASSIGNED_PREFIX} ${actor.name}`, actor.role])
+      : UNASSIGNED_FINDING,
+  };
+}
+
+/**
+ * The filter row above the findings queue: all findings / assigned to me /
+ * unassigned, each carrying how many findings it would leave.
+ *
+ * "Me" is getSigningActor(reviewId) — the actor the decision bar signs as. On
+ * the demo run that is M. Bui, who signed both decisions on the ledger, and
+ * the queue and the bar therefore agree on who "me" is by construction rather
+ * than by coincidence.
+ *
+ * On a run with no signed decision the "mine" filter carries NO count and the
+ * reason instead: see UNRESOLVED_ME. The other two filters are unaffected —
+ * neither needs to know who anybody is.
+ */
+export function getFindingQueue(reviewId: string = DEMO_REVIEW_ID): FindingQueue {
+  const queue = getFindings(reviewId);
+  const me = getSigningActor(reviewId);
+  const assignedCount = queue.filter(
+    (finding) => finding.assignee !== undefined,
+  ).length;
+
+  const all: CountedFindingQueueFilter<"all"> = {
+    id: "all",
+    label: QUEUE_FILTER_LABEL.all,
+    count: queue.length,
+    text: joinSegments([QUEUE_FILTER_LABEL.all, String(queue.length)]),
+  };
+
+  const mine: FindingQueueFilter<"mine"> = me
+    ? (() => {
+        const count = queue.filter(
+          (finding) => finding.assignee?.id === me.id,
+        ).length;
+        return {
+          id: "mine" as const,
+          label: QUEUE_FILTER_LABEL.mine,
+          actor: me,
+          count,
+          text: joinSegments([
+            QUEUE_FILTER_LABEL.mine,
+            me.name,
+            String(count),
+          ]),
+        };
+      })()
+    : {
+        id: "mine",
+        label: QUEUE_FILTER_LABEL.mine,
+        unresolved: UNRESOLVED_ME,
+        text: joinSegments([QUEUE_FILTER_LABEL.mine, UNRESOLVED_ME.headline]),
+      };
+
+  const unassignedCount = queue.length - assignedCount;
+  const unassigned: CountedFindingQueueFilter<"unassigned"> = {
+    id: "unassigned",
+    label: QUEUE_FILTER_LABEL.unassigned,
+    count: unassignedCount,
+    text: joinSegments([
+      QUEUE_FILTER_LABEL.unassigned,
+      String(unassignedCount),
+    ]),
+  };
+
+  return {
+    filters: [all, mine, unassigned],
+    me,
+    defaultFilterId: "all",
+    assignedCount,
+  };
+}
+
+/**
+ * The findings one filter state leaves, in queue order.
+ *
+ * Returns UNDEFINED for "mine" on a run that names nobody — the same absence
+ * getFindingQueue() reports on that filter. An empty array would say the
+ * reviewer has nothing assigned; undefined says this run cannot tell who the
+ * reviewer is, which is the true statement. Callers should read the filter
+ * model first and not offer a state it reports as unresolved.
+ */
+export function getQueueFindings(
+  filterId: FindingQueueFilterId,
+  reviewId: string = DEMO_REVIEW_ID,
+): Finding[] | undefined {
+  const queue = getFindings(reviewId);
+  if (filterId === "all") return queue;
+  if (filterId === "unassigned") {
+    return queue.filter((finding) => finding.assignee === undefined);
+  }
+  const me = getSigningActor(reviewId);
+  if (!me) return undefined;
+  return queue.filter((finding) => finding.assignee?.id === me.id);
 }
 
 // ---------------------------------------------------------------------------

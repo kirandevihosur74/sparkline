@@ -19,18 +19,49 @@
  * Layout: the two columns scroll independently inside a min-h-0 flex row. The
  * page itself never scrolls (theme.css pins html/body) — that is what keeps
  * the pinned decision on screen.
+ *
+ * TWO PIECES OF SESSION STATE, AND THEY ARE COUPLED. Alongside the decisions
+ * and the selected finding sits the queue FILTER — all findings / assigned to
+ * me / unassigned. Which findings each state leaves is not decided here: it is
+ * getQueueFindings() in the data layer, the same module that counts the
+ * filters, so the row count and the count printed beside a filter can never
+ * disagree. This component intersects that answer with the session findings,
+ * which is what keeps a decision taken a moment ago visible on a filtered row.
+ *
+ * SELECTION FOLLOWS THE QUEUE. Changing the filter re-points selection at the
+ * first finding the new filter leaves, unless the current one survives it —
+ * then it stays put, because a filter change should not move a reviewer off
+ * the row they are reading. Keeping a selection the queue no longer lists was
+ * the alternative and it is not defensible here: the detail column carries a
+ * SIGNABLE decision and a signature line reading "finding 2 of 11", so it
+ * would offer to sign a finding the reviewer cannot see in the list, and
+ * "Next finding →" would walk out of the filtered queue. When the new filter
+ * leaves nothing at all, nothing is selected and the detail column says which
+ * filter emptied it — the queue stays on screen, filter row and all, so the
+ * way back is one press away.
+ *
+ * The signature's position segment ("finding 2 of 11") is counted by the data
+ * layer against the RUN, not against the filtered view. That is the true
+ * statement — the ledger records a decision on the run, not on a filter — and
+ * it is why the position can read 2 of 11 while five rows are listed.
  */
 
 import FindingsQueue from "./FindingsQueue";
 import ReviewDetail from "./ReviewDetail";
 import { useCallback, useMemo, useState } from "react";
-import { getDecisionSignature } from "@/lib/data";
+import {
+  getDecisionSignature,
+  getFindingQueue,
+  getQueueFindings,
+} from "@/lib/data";
 import type {
   AuditRecord,
   ClaimVerdict,
   CoverageBreakdown,
   DocumentMeta,
   Finding,
+  FindingQueueFilter,
+  FindingQueueFilterId,
   FlagStatus,
   QueryTrace,
   RejectReason,
@@ -46,6 +77,14 @@ import type {
  * never be mistaken for a real digest.
  */
 const SESSION_CONTENT_HASH = "fixture-sha256:unsigned-session-decision";
+
+/**
+ * What the detail column says when the filter leaves nothing to decide. Both
+ * names come off the filter model, so this sentence points at the control that
+ * is actually on screen and cannot outlive a rename.
+ */
+const NOTHING_UNDER_FILTER = (active: string, all: string) =>
+  `Nothing to decide under ${active}: this filter lists none of the run's findings, so there is no evidence on screen and nothing to sign. Choose ${all} in the queue to continue.`;
 
 /** A decision taken in this session. `null` = undone, back to open. */
 type SessionDecision = {
@@ -86,6 +125,21 @@ export default function ReviewWorkspace({
     () => (findings.find((f) => f.status === "open") ?? findings[0])?.id,
   );
 
+  /**
+   * The three filter states, their counts, and who "me" resolves to on this
+   * run — all counted in the data layer off the same getFindings() this screen
+   * was handed. Nothing about assignment is decided or counted here.
+   */
+  const queue = useMemo(() => getFindingQueue(reviewId), [reviewId]);
+
+  // The queue opens on the state that hides nothing; the model says which.
+  const [filterId, setFilterId] = useState<FindingQueueFilterId>(
+    queue.defaultFilterId,
+  );
+
+  const activeFilter: FindingQueueFilter =
+    queue.filters.find((filter) => filter.id === filterId) ?? queue.filters[0];
+
   /** The findings as this session sees them: fixture order, session statuses. */
   const sessionFindings = useMemo(
     () =>
@@ -97,27 +151,53 @@ export default function ReviewWorkspace({
     [findings, decisions],
   );
 
+  /**
+   * The findings the active filter leaves, in queue order.
+   *
+   * The membership test is the DATA LAYER's — getQueueFindings() applies the
+   * same assignment rule that produced the counts beside the filters — and the
+   * rows rendered are this session's, so a finding approved a moment ago stays
+   * approved when the filter moves. An unresolvable filter returns undefined
+   * and lists nothing: the queue reports that absence rather than an empty
+   * list that would read as "none of these are yours".
+   */
+  const visibleFindings = useMemo(() => {
+    const allowed = getQueueFindings(filterId, reviewId);
+    if (!allowed) return [];
+    const ids = new Set(allowed.map((finding) => finding.id));
+    return sessionFindings.filter((finding) => ids.has(finding.id));
+  }, [sessionFindings, filterId, reviewId]);
+
+  /**
+   * Coverage of the rows on screen, not of the run: the bar sits directly
+   * above the list it describes, so it counts what the list contains. The
+   * run's own total stays one line up, as the "All findings" filter count.
+   */
   const breakdown = useMemo(
-    () => deriveCoverage(sessionFindings),
-    [sessionFindings],
+    () => deriveCoverage(visibleFindings),
+    [visibleFindings],
   );
 
-  const selectedIndex = sessionFindings.findIndex((f) => f.id === selectedId);
+  const selectedIndex = visibleFindings.findIndex((f) => f.id === selectedId);
   const selected =
-    selectedIndex >= 0 ? sessionFindings[selectedIndex] : sessionFindings[0];
+    selectedIndex >= 0 ? visibleFindings[selectedIndex] : visibleFindings[0];
 
-  /** The next finding still open, wrapping past the end of the queue. */
+  /**
+   * The next finding still open, wrapping past the end of the queue — of the
+   * FILTERED queue, so "Next finding →" never lands on a row the list does not
+   * show.
+   */
   const nextOpenId = useMemo(() => {
     if (!selected) return undefined;
     const from = selectedIndex >= 0 ? selectedIndex : 0;
-    for (let step = 1; step <= sessionFindings.length; step += 1) {
-      const candidate = sessionFindings[(from + step) % sessionFindings.length];
+    for (let step = 1; step <= visibleFindings.length; step += 1) {
+      const candidate = visibleFindings[(from + step) % visibleFindings.length];
       if (candidate.id !== selected.id && candidate.status === "open") {
         return candidate.id;
       }
     }
     return undefined;
-  }, [sessionFindings, selected, selectedIndex]);
+  }, [visibleFindings, selected, selectedIndex]);
 
   const resolve = useCallback(
     (
@@ -156,7 +236,33 @@ export default function ReviewWorkspace({
     if (nextOpenId) setSelectedId(nextOpenId);
   }, [nextOpenId]);
 
-  if (!selected) {
+  /**
+   * Change the filter, and take selection with it.
+   *
+   * A finding that survives the new filter keeps the selection — changing the
+   * view should not move a reviewer off the row they were reading. One that
+   * does not is replaced by the first finding the new filter leaves, so the
+   * detail column always shows something the queue lists. If it leaves none,
+   * selection is dropped and the detail column says so; it is not left
+   * pointing at a hidden row with a signable decision on it.
+   */
+  const handleFilterChange = useCallback(
+    (nextFilterId: FindingQueueFilterId) => {
+      setFilterId(nextFilterId);
+      const allowed = getQueueFindings(nextFilterId, reviewId) ?? [];
+      setSelectedId((current) =>
+        allowed.some((finding) => finding.id === current)
+          ? current
+          : allowed[0]?.id,
+      );
+    },
+    [reviewId],
+  );
+
+  // A run with no findings at all has no queue to render and no filter that
+  // could bring one back. That is a different statement from "this filter
+  // hides them", which is made below, next to the filter row that undoes it.
+  if (sessionFindings.length === 0) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-8">
         {/* The system says what it does not know. */}
@@ -178,7 +284,7 @@ export default function ReviewWorkspace({
    * endorses rather than takes one) and says "an unidentified reviewer" when a
    * run has signed nothing at all.
    */
-  const signature = getDecisionSignature(selected.id, reviewId);
+  const signature = getDecisionSignature(selected?.id, reviewId);
   /**
    * The name stamped on a decision taken in this session. It is the SAME name
    * the pending bar signs with: a bar that reads "Signing as M. Bui" and then
@@ -190,24 +296,42 @@ export default function ReviewWorkspace({
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       <FindingsQueue
-        findings={sessionFindings}
+        findings={visibleFindings}
         breakdown={breakdown}
-        selectedId={selected.id}
+        queue={queue}
+        filterId={activeFilter.id}
+        onFilterChange={handleFilterChange}
+        selectedId={selected?.id}
         onSelect={setSelectedId}
       />
 
-      <ReviewDetail
-        finding={selected}
-        documents={documents}
-        trace={traces.find((trace) => trace.flagId === selected.id)}
-        reviewer={signer}
-        signature={signature}
-        record={recordFor(selected, decisions[selected.id], records, signer)}
-        onApprove={handleApprove}
-        onReject={handleReject}
-        onUndo={handleUndo}
-        onNext={nextOpenId ? handleNext : undefined}
-      />
+      {selected ? (
+        <ReviewDetail
+          finding={selected}
+          documents={documents}
+          trace={traces.find((trace) => trace.flagId === selected.id)}
+          reviewer={signer}
+          signature={signature}
+          record={recordFor(selected, decisions[selected.id], records, signer)}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          onUndo={handleUndo}
+          onNext={nextOpenId ? handleNext : undefined}
+        />
+      ) : (
+        /* The filter emptied the queue, so there is nothing to sign. The queue
+           beside this — filter row and all — is how the reviewer gets back. */
+        <div className="flex min-h-0 flex-1 items-center justify-center p-8">
+          <p className="max-w-prose text-body text-ink-3">
+            {activeFilter.unresolved
+              ? activeFilter.unresolved.reason
+              : NOTHING_UNDER_FILTER(
+                  activeFilter.label,
+                  queue.filters[0].label,
+                )}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

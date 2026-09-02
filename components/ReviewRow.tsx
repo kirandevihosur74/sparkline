@@ -211,7 +211,7 @@ export default function ReviewRow({ row }: ReviewRowProps) {
         <span className="tabular text-caption text-ink-3">
           {row.counts.text}
         </span>
-        <span aria-hidden="true" className="text-caption text-line-strong">
+        <span aria-hidden="true" className="text-caption text-ink-3">
           ·
         </span>
         <span className="text-caption text-ink-2">{row.waiting.text}</span>

@@ -382,9 +382,13 @@ function ComponentBar({
         )}
       </div>
 
+      {/* Track token is `line`, the same one ConfidenceMeter's bar and the
+          dial's own arc track use — `line-soft` is the internal-divider grey
+          and against `surface` it drops to 1.05:1 on the dark ground, leaving
+          the fill floating with no track behind it. */}
       <span
         aria-hidden="true"
-        className="block h-1.5 w-full overflow-hidden rounded-full bg-line-soft"
+        className="block h-1.5 w-full overflow-hidden rounded-full bg-line"
       >
         {usable ? (
           <span

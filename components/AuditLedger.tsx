@@ -116,9 +116,15 @@ const REJECT_REASON: Record<RejectReason, string> = {
  * the same whether the row it sits on endorses an approval or a rejection. The
  * word is always beside it, per "colour never carries meaning alone".
  *
- * `canvas` rather than `subtle` for the neutral roles: `subtle` (#fafbfb) is
- * indistinguishable from the `surface` the ledger sits on, so the square would
- * not read as a square at all. Both are soft neutral tokens from theme.css.
+ * `canvas` rather than `subtle` for the neutral roles: measured against the
+ * `surface` the ledger is drawn on, `subtle` is one step away and `canvas` is
+ * two — in BOTH themes. `canvas` is therefore the neutral that separates
+ * either way. No value is quoted here on purpose: theme.css owns values, and
+ * a hex in this comment would pin the reasoning to one theme (it did — it
+ * named the light `subtle` and stopped being true the day dark landed).
+ *
+ * The tint is only a tint. What makes the square read as a square is the 1px
+ * `line` edge on it in ActorCell; see the note there.
  */
 const ROLE_TINT: Record<ActorRole, string> = {
   Reviewer: "bg-canvas text-ink-2",
@@ -530,9 +536,18 @@ function ActorCell({ record }: { record: AuditRecord }) {
 
   return (
     <span className="flex items-start gap-2.5">
+      {/* The 1px `line` edge, not the fill, is what makes this read as a
+          square. A `-soft` tint is a pale wash in light and a deep one in
+          dark (theme.css: "a deep tint of its own hue rather than a pale
+          one"), so it carries hue at close to the surface's own lightness —
+          `accent-soft` on `surface` is 1.15:1 in light and 1.03:1 in dark,
+          which is a fill with no edge. Bordering the square in the house's
+          standard `line` gives it a shape that holds in either theme and
+          leaves the tint doing only what it is for: saying which role
+          signed. Same border on every role, so the edge states nothing. */}
       <span
         aria-hidden="true"
-        className={`grid size-7 shrink-0 place-items-center rounded text-micro font-medium ${tint}`}
+        className={`grid size-7 shrink-0 place-items-center rounded border border-line text-micro font-medium ${tint}`}
       >
         {actor?.initials}
       </span>

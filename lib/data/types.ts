@@ -174,6 +174,31 @@ interface FindingBase {
    * field for.
    */
   summary?: string;
+  /**
+   * Whose queue this finding sits in, BEFORE anybody signs anything.
+   *
+   * TODO(schema-gap: assignment): the backend has no assignment concept at
+   * all. The ONLY actor lib/types.ts ever names is `ReviewRecord.reviewer` —
+   * a free-form display name, with no identity and no role — and it is
+   * written when a decision is SIGNED. So the contract can say who decided a
+   * finding after the fact, and cannot say whose queue an UNSIGNED finding is
+   * in: the nine open findings on the demo run are, to the backend, owned by
+   * nobody.
+   *
+   * Closing this gap needs a column the backend does not have: an
+   * `assignedToActorId` on the finding/flag record (with the Actor entity
+   * TODO(schema-gap: ReviewRecord) already names), written at routing time and
+   * cleared on sign-off — NOT a second reading of `ReviewRecord.reviewer`,
+   * which exists only once the work is done.
+   *
+   * Until then every value of this field is AUTHORED IN fixtures.ts, not
+   * derived from anything: no rule, no round-robin and no workload figure
+   * produced it. The counts built on top of it (getFindingQueue) ARE derived —
+   * they count these findings — but what they count is a fixture's opinion.
+   * `undefined` is a first-class value and means unassigned; it is never a
+   * lookup that failed.
+   */
+  assignee?: Actor;
 }
 
 /** Beat 1 finding — wraps the domain ContradictionFlag with render context. */
@@ -945,6 +970,113 @@ export interface DecisionSignature {
   /** Segments in render order, already stripped of empties. */
   segments: readonly string[];
   /** "Signing as M. Bui · Reviewer · finding 2 of 11". */
+  text: string;
+}
+
+// ---------------------------------------------------------------------------
+// The findings queue filter — all findings / assigned to me / unassigned
+//
+// Same TODO(schema-gap: assignment) as Finding.assignee above: there is no
+// assignment column and no session identity in the contract, so BOTH halves of
+// "assigned to me" are frontend-only. The assignments are authored in
+// fixtures.ts; "me" is resolved by getSigningActor(), which is the same actor
+// the decision bar signs as — one resolution, so the queue and the bar can
+// never name two different people.
+// ---------------------------------------------------------------------------
+
+/** The three states, in the order they render. */
+export type FindingQueueFilterId = "all" | "mine" | "unassigned";
+
+/**
+ * Why a filter cannot be applied, as renderable copy.
+ *
+ * Mirrors TrustScoreUnavailable: the absence is typed and says what it does
+ * not know. It exists for exactly one case — a run with no signed decision has
+ * no signing actor, so "me" resolves to nobody and the count of "my" findings
+ * is UNKNOWN. Unknown is not zero: reporting 0 would tell the reviewer that
+ * nothing is assigned to them, when what is actually true is that this run
+ * cannot tell who they are.
+ */
+export interface QueueFilterUnresolved {
+  /** Stands where the count would be, e.g. "Not resolvable". */
+  headline: string;
+  /** One line, consequence before cause. */
+  reason: string;
+}
+
+interface FindingQueueFilterBase<
+  Id extends FindingQueueFilterId = FindingQueueFilterId,
+> {
+  id: Id;
+  /** "All findings" / "Assigned to me" / "Unassigned". */
+  label: string;
+  /**
+   * Who the filter resolves to. Set only on "mine", and only when a signing
+   * actor exists — it is the SAME Actor DecisionSignature.actor carries.
+   */
+  actor?: Actor;
+  /** "All findings · 11" / "Assigned to me · M. Bui · 5" / "Unassigned · 2". */
+  text: string;
+}
+
+/** A filter that knows how many findings it would leave. */
+export interface CountedFindingQueueFilter<
+  Id extends FindingQueueFilterId = FindingQueueFilterId,
+> extends FindingQueueFilterBase<Id> {
+  /** Findings this filter leaves, counted off getFindings() on every call. */
+  count: number;
+  unresolved?: undefined;
+}
+
+/** A filter that cannot be applied, and says why instead of showing a zero. */
+export interface UnresolvedFindingQueueFilter<
+  Id extends FindingQueueFilterId = FindingQueueFilterId,
+> extends FindingQueueFilterBase<Id> {
+  /** Never present when the filter cannot be resolved. The absence IS the value. */
+  count?: undefined;
+  unresolved: QueueFilterUnresolved;
+}
+
+export type FindingQueueFilter<
+  Id extends FindingQueueFilterId = FindingQueueFilterId,
+> = CountedFindingQueueFilter<Id> | UnresolvedFindingQueueFilter<Id>;
+
+/**
+ * The filter row above the findings queue.
+ *
+ * The tuple is the ordering contract, and its types say which state can go
+ * missing: "all" and "unassigned" are ALWAYS countable — they are read off the
+ * findings themselves and need no identity — while "mine" needs to know who
+ * "me" is, and on a run that has signed nothing, nobody does.
+ */
+export interface FindingQueue {
+  /** EXACTLY three, in render order. */
+  filters: readonly [
+    CountedFindingQueueFilter<"all">,
+    FindingQueueFilter<"mine">,
+    CountedFindingQueueFilter<"unassigned">,
+  ];
+  /**
+   * Who "me" is on this run — getSigningActor()'s answer, the same one
+   * getDecisionSignature() renders. Undefined when the run names nobody.
+   */
+  me?: Actor;
+  /** Which filter the queue opens on. Always "all": it hides nothing. */
+  defaultFilterId: FindingQueueFilterId;
+  /**
+   * Findings carrying SOME assignee, whoever it is. Not a filter state — it is
+   * the number the "mine" filter cannot break down when "me" is unknown, so
+   * the unresolved case can still say how much work is spoken for.
+   */
+  assignedCount: number;
+}
+
+/** The assignment line on one finding, derived from its own `assignee`. */
+export interface FindingAssignment {
+  actor?: Actor;
+  /** False exactly when `actor` is absent. */
+  assigned: boolean;
+  /** "Assigned to M. Bui · Reviewer" / "Unassigned — this finding names no reviewer". */
   text: string;
 }
 

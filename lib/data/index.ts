@@ -83,6 +83,17 @@ export type {
   FindingsFooter,
   FindingPosition,
   DecisionSignature,
+  // The findings queue filter — all findings / assigned to me / unassigned.
+  // Assignment is authored in fixtures.ts and "me" is the decision bar's own
+  // signing actor (TODO(schema-gap: assignment) — the backend names an actor
+  // only on a signed record, and has no column for an unsigned finding's queue)
+  FindingQueueFilterId,
+  QueueFilterUnresolved,
+  CountedFindingQueueFilter,
+  UnresolvedFindingQueueFilter,
+  FindingQueueFilter,
+  FindingQueue,
+  FindingAssignment,
   // Trust formula — the arithmetic under the dial, computed from the bars
   TrustFormulaTerm,
   TrustFormula,
@@ -125,6 +136,10 @@ export {
   getFindingsHeader,
   getFindingsFooter,
   getFindingPosition,
+  // Queue filter — counts derived from the findings, "me" from getSigningActor
+  getFindingAssignment,
+  getFindingQueue,
+  getQueueFindings,
   // Trust formula
   getTrustFormula,
   // Workspace policy and compliance copy

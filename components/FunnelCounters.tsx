@@ -255,9 +255,15 @@ export default function FunnelCounters({
             </div>
 
             {index < stages.length - 1 ? (
+              /* The empty track is `line`, the same grey as the 1px box
+                 borders it joins, so the hairline reads as continuous in both
+                 themes. `line-soft` is the internal-divider grey and against
+                 `canvas` it is 1.05:1 in light and 1.29:1 in dark — a track
+                 nobody can see is a progress line that only exists once it
+                 has filled. */
               <span
                 aria-hidden="true"
-                className="h-px w-6 shrink-0 self-center overflow-hidden bg-line-soft sm:w-10"
+                className="h-px w-6 shrink-0 self-center overflow-hidden bg-line sm:w-10"
               >
                 {connectorTone ? (
                   <span
