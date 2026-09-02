@@ -42,6 +42,8 @@ export interface ExtractedClaim {
   sourcePage?: number;
   /** Which DWS surface produced it: structured table cell, prose text, or KVP. */
   extractionMethod: "table" | "text" | "kvp";
+  /** Verbatim sentence from the DWS text layer surrounding the claim. */
+  excerpt?: string;
 }
 
 export type FlagStatus = "open" | "approved" | "rejected";
@@ -80,6 +82,22 @@ export interface StalenessFlag {
 
 export type Flag = ContradictionFlag | StalenessFlag;
 
+/**
+ * One search result the live check looked at, with the decision the source
+ * evaluator made about it — kept so a reviewer can audit the search itself,
+ * not just its winning URL.
+ */
+export interface EvidenceResult {
+  position: number;
+  title: string;
+  url: string;
+  domain: string;
+  snippet?: string;
+  decision: "accepted" | "rejected";
+  /** Why the evaluator accepted/rejected this result. */
+  reason: string;
+}
+
 /** Evidence attached to an externally verified claim. */
 export interface ExternalEvidence {
   query: string;
@@ -87,6 +105,10 @@ export interface ExternalEvidence {
   sourceDomain?: string;
   liveValue?: string;
   checkedAt: string;
+  /** Every result the evaluator considered, in rank order. */
+  results?: EvidenceResult[];
+  /** Wall-clock time of the live call, in milliseconds. */
+  durationMs?: number;
 }
 
 /** One claim type's resolution across the whole diligence room. */
@@ -112,6 +134,15 @@ export interface TrustScore {
   formula: string;
 }
 
+/** A live-check stage that could not complete — the claims it stranded. */
+export interface LiveCheckFailure {
+  /** Machine code, e.g. "HTTP 429". */
+  code: string;
+  message: string;
+  retryAfterSec?: number;
+  affectedClaimIds: string[];
+}
+
 /** Full pipeline output — what /api/analyze returns. */
 export interface AnalysisResult {
   claimsByDoc: Record<string, ExtractedClaim[]>;
@@ -119,6 +150,10 @@ export interface AnalysisResult {
   flags: Flag[];
   trustScore: TrustScore;
   analyzedAt: string;
+  /** Page count per document, from the DWS text layer. */
+  pages?: Record<string, number>;
+  /** Present when the live check was refused or failed part-way. */
+  liveCheckFailure?: LiveCheckFailure;
 }
 
 /** Beat 3 — a human decision, backed by a DWS digital signature. */
@@ -129,4 +164,56 @@ export interface ReviewRecord {
   signedAt: string; // ISO timestamp
   /** Where the signed, tamper-evident PDF record lives. */
   signedDocumentUrl?: string;
+  /** SHA-256 of the signed PDF bytes, prefixed "sha256:". */
+  contentHash?: string;
+  /** Structured rejection code; absent on approve. */
+  reason?: string;
+  /** Reviewer's own words. */
+  note?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Run instrumentation — what the pipeline reports about itself while it runs.
+// ---------------------------------------------------------------------------
+
+export type RunStageId = "extract" | "compare" | "live_check";
+
+export type RunStageState = "pending" | "running" | "done" | "failed" | "skipped";
+
+export interface RunStageFailure {
+  headline: string;
+  detail: string;
+  code: string;
+  retryAfterSec?: number;
+  affectedClaimIds: string[];
+}
+
+export interface RunStageUpdate {
+  id: RunStageId;
+  state: RunStageState;
+  durationMs?: number;
+  metric?: { value: number; unit: string };
+  failure?: RunStageFailure;
+}
+
+/** Verdict label rendered beside a reasoning line (frontend vocabulary). */
+export type FindingVerdict =
+  | "conflicting"
+  | "stale"
+  | "corroborated"
+  | "consistent"
+  | "review_required"
+  | "unverified";
+
+export interface RunEvent {
+  /** Milliseconds since the run started. */
+  elapsedMs: number;
+  /** Plain text — rendered as a text node, never markup. */
+  message: string;
+  verdict?: FindingVerdict;
+}
+
+export interface AnalyzeObserver {
+  onStage?: (update: RunStageUpdate) => void;
+  onEvent?: (event: RunEvent) => void;
 }

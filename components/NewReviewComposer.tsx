@@ -7,10 +7,11 @@
  * and the screen's single primary action pinned in a footer that never
  * scrolls away.
  *
- * Client component for one reason: whether the slots are filled is local UI
- * state (the sample bundle is loaded on click, not on load) and there is no
- * server to hold it. Every value it renders still arrives as a prop from the
- * data layer — the component reads nothing and fetches nothing.
+ * Client component for two reasons: whether the slots are filled is local UI
+ * state (the sample bundle is loaded on click, not on load), and "Run
+ * analysis" is the one place this screen talks to the server — it POSTs
+ * /api/runs to start the real pipeline and routes to the run it created.
+ * Every value it renders still arrives as a prop from the data layer.
  *
  * Shadow discipline: `shadow-action` appears on exactly one element, the
  * "Run analysis" button, and Tailwind's `disabled:shadow-none` takes it away
@@ -21,15 +22,10 @@
  * entity — see the marker on components/DocumentSlot.tsx. The consequence is
  * visible in this component's copy rather than hidden behind a file picker
  * that could not work.
- *
- * TODO(schema-gap: pipeline): the backend has no Run entity, so "Run analysis"
- * cannot start anything — it opens the committed fixture run instead. The
- * footer says so; when a Run exists, this button POSTs and routes to the run
- * it created.
  */
 
 import { useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import DocumentSlot, { formatFileSize } from "@/components/DocumentSlot";
 import type { DocumentMeta, PipelineStage } from "@/lib/data";
 
@@ -68,10 +64,13 @@ export interface NewReviewComposerProps {
    */
   stages: PipelineStage[];
   /**
-   * Where the primary action goes. Undefined when the demo review is not in
-   * the data layer, which disables the action instead of routing to a 404.
+   * Whether the server has both provider keys. When it does, "Run analysis"
+   * starts a live run; when it does not, the committed replay is offered
+   * instead so the demo never dead-ends.
    */
-  runHref?: string;
+  liveRunAvailable: boolean;
+  /** The committed run's analyzing state — the fallback when no live run can start. */
+  replayHref?: string;
 }
 
 export default function NewReviewComposer({
@@ -79,18 +78,54 @@ export default function NewReviewComposer({
   reviewTitle,
   reviewSubtitle,
   stages,
-  runHref,
+  liveRunAvailable,
+  replayHref,
 }: NewReviewComposerProps) {
+  const router = useRouter();
   const [loaded, setLoaded] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | undefined>();
 
   const bundleComplete = bundle.length >= SLOTS.length;
   const filled = loaded ? bundle.slice(0, SLOTS.length) : [];
-  const canRun = filled.length === SLOTS.length && runHref !== undefined;
+  const runnable = liveRunAvailable || replayHref !== undefined;
+  const canRun = filled.length === SLOTS.length && runnable && !starting;
 
   const totalPages = filled.reduce((sum, doc) => sum + doc.pageCount, 0);
   const totalSize = formatFileSize(
     filled.reduce((sum, doc) => sum + doc.sizeBytes, 0),
   );
+
+  const run = async () => {
+    setError(undefined);
+    if (!liveRunAvailable) {
+      if (replayHref) router.push(replayHref);
+      return;
+    }
+    setStarting(true);
+    try {
+      const response = await fetch("/api/runs", { method: "POST" });
+      const body = (await response.json()) as { id?: string; error?: string };
+      if (!response.ok || !body.id) {
+        throw new Error(body.error ?? `The run could not be started (HTTP ${response.status}).`);
+      }
+      router.push(`/reviews/${encodeURIComponent(body.id)}?state=analyzing`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setStarting(false);
+    }
+  };
+
+  const footerNote = (() => {
+    if (starting) return "Recording the run and handing the bundle to Nutrient DWS…";
+    if (error) return error;
+    if (filled.length !== SLOTS.length) return "Load the sample bundle to enable this.";
+    if (!runnable) return "There is no run to open: the demo review is not in the data layer.";
+    if (liveRunAvailable) {
+      return "Runs the pipeline live: Nutrient DWS reads both documents, Sparkline compares the claims, SerpApi checks what only the public record can settle.";
+    }
+    return "Opens the committed run: provider keys are not configured on this server, so this build replays a recorded analysis.";
+  })();
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
@@ -146,32 +181,23 @@ export default function NewReviewComposer({
                 }`
               : "Both slots are empty."}
           </p>
-          <p className="mt-0.5 text-caption text-ink-3">
-            {canRun
-              ? "Opens the committed run: this build replays a recorded analysis rather than calling the providers again."
-              : runHref === undefined
-                ? "There is no run to open: the demo review is not in the data layer."
-                : "Load the sample bundle to enable this."}
+          <p
+            aria-live="polite"
+            className={`mt-0.5 text-caption ${error ? "text-alert" : "text-ink-3"}`}
+          >
+            {footerNote}
           </p>
         </div>
 
-        {canRun ? (
-          /* The one shadow-action element on this screen. */
-          <Link
-            href={runHref}
-            className="rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none"
-          >
-            Run analysis
-          </Link>
-        ) : (
-          <button
-            type="button"
-            disabled
-            className="rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line-strong disabled:shadow-none"
-          >
-            Run analysis
-          </button>
-        )}
+        {/* The one shadow-action element on this screen. */}
+        <button
+          type="button"
+          disabled={!canRun}
+          onClick={run}
+          className="rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line-strong disabled:shadow-none"
+        >
+          {starting ? "Starting run…" : "Run analysis"}
+        </button>
       </footer>
     </section>
   );

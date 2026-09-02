@@ -50,3 +50,7 @@ next-env.d.ts
 
 # private planning doc
 hackathon-plan-v3.md
+/data/runs/
+/data/ledgers/
+/data/records/
+/data/smoke-signed.pdf

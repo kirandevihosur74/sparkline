@@ -3,15 +3,14 @@
  * plus the loader for the committed sample bundle.
  *
  * Server component. Every value on the screen is read here, once, from
- * lib/data and passed down as props — there are no GET endpoints and no
- * component below this line fetches anything.
+ * lib/data and passed down as props.
  *
  * Honesty note, and the reason this screen looks the way it does: nothing in
- * this build can accept an upload. `POST /api/extract` will take a PDF and
- * return claims, but no route stores a document, records its size or receipt
- * time, or attaches it to a review — so a real dropzone here would take a
- * reviewer's file and drop it. The slots therefore say what they cannot do,
- * and the sample bundle is offered as the thing that works today.
+ * this build can accept an upload — no route stores a document or attaches
+ * it to a review — so the slots say what they cannot do, and the sample
+ * bundle is offered as the thing that works. "Run analysis" then runs the
+ * real pipeline over that bundle (POST /api/runs) and routes to the run it
+ * started.
  */
 
 import type { Metadata } from "next";
@@ -30,25 +29,16 @@ export default function NewReviewPage() {
   const review = getReview(DEMO_REVIEW_ID);
   const stages = getStages(DEMO_REVIEW_ID);
 
-  // Where "Run analysis" goes: the analysis screen, in its ANALYZING state.
-  //
-  // This pointed at `/reviews/${review.id}/review` while the analysis screen
-  // was a stub — the review workspace was the only route the committed run
-  // had. That screen has landed (DESIGN_SYSTEM screens 2 and 3), so the action
-  // now runs the analysis it names instead of skipping past it. `?state=
-  // analyzing` is the explicit signal that starts the replay; a plain visit to
-  // the same route shows the completed run, which is what the fixtures hold.
-  const runHref = review
-    ? `/reviews/${review.id}?state=analyzing`
-    : undefined;
-
   return (
     <NewReviewComposer
       bundle={bundle}
       reviewTitle={review?.title}
       reviewSubtitle={review?.subtitle}
       stages={stages}
-      runHref={runHref}
+      // A live run needs both provider keys on the server; without them the
+      // committed replay is still offered so the demo never dead-ends.
+      liveRunAvailable={Boolean(process.env.NUTRIENT_API_KEY && process.env.SERPAPI_API_KEY)}
+      replayHref={review ? `/reviews/${review.id}?state=analyzing` : undefined}
     />
   );
 }

@@ -2,7 +2,7 @@ import { NutrientClient } from "@nutrient-sdk/dws-client-typescript";
 import { CLAIM_REGISTRY, type ClaimDef } from "./claims-registry";
 import type { ExtractedClaim } from "./types";
 
-// DWS Processor API client (extraction + signing).
+// DWS Processor API client (extraction + conversion + signing).
 // SDK docs: node_modules/@nutrient-sdk/dws-client-typescript/LLM_DOC.md
 let client: NutrientClient | null = null;
 
@@ -21,6 +21,9 @@ export function getNutrientClient(): NutrientClient {
 // DWS confidence, so they get fixed heuristic bases, table above prose.
 const TABLE_CONFIDENCE = 0.95;
 const TEXT_CONFIDENCE = 0.85;
+
+/** Longest excerpt kept from the text layer, in characters. */
+const EXCERPT_MAX = 280;
 
 interface TableRow {
   label: string;
@@ -106,6 +109,54 @@ async function extractPageTexts(pdf: Buffer): Promise<string[]> {
   return (data.pages ?? []).map((p) => p.plainText ?? "");
 }
 
+/** Collapse whitespace and cap length so an excerpt reads as one quote. */
+function tidyExcerpt(raw: string): string {
+  const text = raw.replace(/\s+/g, " ").trim();
+  return text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX - 1).trimEnd()}…` : text;
+}
+
+/**
+ * The sentence of `text` that contains character offset `index`. Line breaks
+ * inside the DWS text layer fall mid-sentence, so they are treated as spaces
+ * (one character for one, so offsets survive) and only punctuation ends a
+ * sentence.
+ */
+function sentenceAt(text: string, index: number): string {
+  const flat = text.replace(/\r/g, " ").replace(/\n/g, " ");
+  let start = index;
+  while (start > 0 && !/[.!?]\s/.test(flat.slice(start - 2, start))) start -= 1;
+  let end = index;
+  while (end < flat.length && !/[.!?](\s|$)/.test(flat.slice(end, end + 2))) end += 1;
+  return tidyExcerpt(flat.slice(start, Math.min(end + 1, flat.length)));
+}
+
+/** The sentence a prose pattern matches, if any — the best excerpt for a claim. */
+function findByPattern(
+  def: ClaimDef,
+  pageTexts: string[]
+): { page: number; excerpt: string } | undefined {
+  for (const [page, text] of pageTexts.entries()) {
+    for (const pattern of def.prosePatterns) {
+      const m = text.match(pattern);
+      if (m) return { page, excerpt: sentenceAt(text, m.index ?? 0) };
+    }
+  }
+  return undefined;
+}
+
+/** First sentence across the pages that carries `needle` verbatim. */
+function findSentence(
+  pageTexts: string[],
+  needle: string
+): { page: number; excerpt: string } | undefined {
+  if (!needle) return undefined;
+  for (const [page, text] of pageTexts.entries()) {
+    const at = text.indexOf(needle);
+    if (at >= 0) return { page, excerpt: sentenceAt(text, at) };
+  }
+  return undefined;
+}
+
 function matchClaim(
   def: ClaimDef,
   documentId: string,
@@ -119,6 +170,12 @@ function matchClaim(
     const parsed = def.parse(tableHit.value);
     // KVP with a matching key upgrades confidence to DWS's native number.
     const kvpHit = kvps.find((k) => def.tableLabel.test(k.key));
+    // The prose sentence that carries the same value is the better excerpt;
+    // the table row itself is the fallback.
+    const prose =
+      findByPattern(def, pageTexts) ??
+      findSentence(pageTexts, parsed.value) ??
+      findSentence(pageTexts, tableHit.value);
     return {
       id: `${documentId}:${def.type}`,
       documentId,
@@ -127,8 +184,9 @@ function matchClaim(
       value: parsed.value,
       numericValue: parsed.numericValue,
       confidence: kvpHit ? kvpHit.confidence : TABLE_CONFIDENCE,
-      sourcePage: tableHit.page,
+      sourcePage: prose?.page ?? tableHit.page,
       extractionMethod: kvpHit ? "kvp" : "table",
+      excerpt: prose?.excerpt ?? tidyExcerpt(`${tableHit.label}: ${tableHit.value}`),
     };
   }
 
@@ -149,6 +207,7 @@ function matchClaim(
           confidence: TEXT_CONFIDENCE,
           sourcePage: pi,
           extractionMethod: "text",
+          excerpt: sentenceAt(text, m.index ?? 0),
         };
       }
     }
@@ -156,15 +215,22 @@ function matchClaim(
   return null;
 }
 
+export interface ExtractedDocument {
+  documentId: string;
+  claims: ExtractedClaim[];
+  /** Pages in the DWS text layer. */
+  pageCount: number;
+}
+
 /**
  * Beat 1, step 1 — extract structured claims + confidence from a document.
  * Three DWS surfaces in parallel: tables (structure), text (recall),
  * key-value pairs (native confidence).
  */
-export async function extractClaims(
+export async function extractDocument(
   file: Buffer,
   documentId: string
-): Promise<ExtractedClaim[]> {
+): Promise<ExtractedDocument> {
   const [tables, kvps, pageTexts] = await Promise.all([
     extractTables(file),
     extractKvps(file),
@@ -176,18 +242,49 @@ export async function extractClaims(
     const claim = matchClaim(def, documentId, tables, kvps, pageTexts);
     if (claim) claims.push(claim);
   }
-  return claims;
+  return { documentId, claims, pageCount: pageTexts.length };
+}
+
+/** Claims only — the original Day-2 surface, kept for scripts and routes. */
+export async function extractClaims(
+  file: Buffer,
+  documentId: string
+): Promise<ExtractedClaim[]> {
+  return (await extractDocument(file, documentId)).claims;
 }
 
 /**
- * Beat 3, step 2 — digitally sign a PDF review record.
+ * Beat 3, step 1 — render a small Markdown document to PDF through DWS
+ * conversion (the same path that built the demo PDFs). Used for the review
+ * record before it is signed. DWS rejects text/html input, so Markdown it is.
+ */
+export async function renderPdf(markdown: string, filename = "record.md"): Promise<Buffer> {
+  const result = await getNutrientClient().convert(
+    { type: "buffer", buffer: Buffer.from(markdown, "utf8"), filename },
+    "pdf"
+  );
+  return Buffer.from(result.buffer);
+}
+
+/**
+ * Beat 3, step 2 — digitally sign a PDF review record with DWS. The document
+ * is flattened first so nothing can be edited under the signature; the
+ * visible appearance carries the signing time in ISO 8601 with timezone.
  * sign() only accepts local files/Buffers (not URLs).
  */
 export async function signRecord(pdf: Buffer): Promise<Buffer> {
-  const dws = getNutrientClient();
-  void dws;
-  void pdf;
-  // TODO(beat-3): const result = await dws.sign(pdf, { ...signature options });
-  // return the signed PDF bytes for storage / audit trail.
-  throw new Error("signRecord not implemented — Day 3 task (plan §6)");
+  const result = await getNutrientClient().sign(
+    { type: "buffer", buffer: pdf, filename: "record.pdf" },
+    {
+      flatten: true,
+      appearance: {
+        mode: "descriptionOnly",
+        showWatermark: false,
+        showSignDate: true,
+        showDateTimezone: true,
+      },
+      position: { pageIndex: 0, rect: [48, 600, 340, 84] },
+    }
+  );
+  return Buffer.from(result.buffer);
 }

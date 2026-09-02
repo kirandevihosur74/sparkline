@@ -38,8 +38,10 @@ import type {
   TrustScoreComponent,
   TrustContextFact,
   TrustDistortionNote,
+  RunData,
 } from "./types";
 import { normalizeConfidence } from "./types";
+import { getRegisteredRun } from "./live-registry";
 
 // ---------------------------------------------------------------------------
 // Review
@@ -1036,16 +1038,7 @@ const degradedReview: ReviewSummary = {
 // degraded run existed.
 // ---------------------------------------------------------------------------
 
-interface FixtureRun {
-  review: ReviewSummary;
-  claims: ExtractedClaim[];
-  flags: Flag[];
-  findings: Finding[];
-  queryTraces: QueryTrace[];
-  auditRecords: AuditRecord[];
-  stages: PipelineStage[];
-  events: PipelineEvent[];
-}
+type FixtureRun = RunData;
 
 const runs: Record<string, FixtureRun> = {
   [DEMO_REVIEW_ID]: {
@@ -1072,6 +1065,13 @@ const runs: Record<string, FixtureRun> = {
 
 /** undefined for an unknown id — an unknown review is not the demo review. */
 function resolveRun(reviewId: string): FixtureRun | undefined {
+  // A run the server resolved for this request (live, or fixture + signed
+  // overlay) wins over the committed fixture of the same id.
+  return getRegisteredRun(reviewId) ?? runs[reviewId];
+}
+
+/** The committed fixture run itself, untouched by any overlay. */
+export function getFixtureRun(reviewId: string): RunData | undefined {
   return runs[reviewId];
 }
 

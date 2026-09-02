@@ -8,8 +8,9 @@
  * visible regardless of document length. That is the whole reason the page
  * itself never scrolls (theme.css base layer).
  *
- * States (from `finding.status`, never from local state):
+ * States (from `finding.status` plus the signing flag, never from local state):
  *   pending  — "Signing as {reviewer}" + Reject finding / Approve finding
+ *   signing  — same strip, buttons disabled, "Signing with Nutrient DWS…"
  *   approved — confirmation strip on `accent-soft`
  *   rejected — confirmation strip on `alert-soft`
  *
@@ -34,12 +35,6 @@ import { formatUtc } from "@/lib/format";
  * Who signs. DESIGN_SYSTEM.md: "Nutrient DWS" attributes extraction AND
  * signing, because the API does that work — so the provider name sits next to
  * its output, here the signature line.
- *
- * TODO(schema-gap: provider attribution on findings): only PipelineStage
- * carries a `provider` field (lib/data/types.ts). ReviewRecord records the
- * reviewer and the signed document URL but never who produced the signature,
- * so this tag is a frontend constant. Read it off the record once the backend
- * attributes signatures; do not reconcile the two.
  */
 const SIGNING_PROVIDER = "Nutrient DWS";
 
@@ -66,26 +61,28 @@ const REJECT_REASONS = Object.keys(REJECT_REASON) as RejectReason[];
  */
 const DEFAULT_REJECT_REASON: RejectReason = "not_a_conflict";
 
+/** A real record is served by the app; fixture paths are recorded, not served. */
+const SERVED_RECORD_PREFIX = "/api/records/";
+
 export interface DecisionBarProps {
   /** The finding under review. `finding.status` drives which state renders. */
   finding: Finding;
   /**
-   * Who is signing — `AuditRecord.reviewer` from the data layer, never a
-   * literal. In the pending state it is the "Signing as {name}" line; in the
-   * resolved state `record.reviewer` wins, because that is who actually signed.
+   * Who is signing — the deployment's reviewer, never a literal. In the
+   * pending state it is the "Signing as {name}" line; in the resolved state
+   * `record.reviewer` wins, because that is who actually signed.
    */
   reviewer: string;
   /**
    * The signed decision for this finding, once one exists — supplies the
-   * timestamp, the rejection reason and the reviewer's note.
-   *
-   * TODO(schema-gap: ReviewRecord): a Finding carries only FlagStatus — no
-   * decision timestamp, no reviewer, no reason and no note. All four live on
-   * AuditRecord (whose `reason` and `note` are themselves fixture-only: the
-   * sign route persists neither). Without a record the strip says what it does
-   * not know rather than inventing a time.
+   * timestamp, the rejection reason, the reviewer's note, the content hash
+   * and the signed record's URL.
    */
   record?: AuditRecord;
+  /** True while the signature is being made; the buttons wait. */
+  signing?: boolean;
+  /** Why the last signature attempt failed. The finding stays open. */
+  signError?: string;
   /** Pre-selected rejection reason. Defaults to "Not a conflict". */
   defaultRejectReason?: RejectReason;
   onApprove?: (findingId: string) => void;
@@ -101,10 +98,20 @@ function formatSignedAt(iso: string | undefined): string | undefined {
   return iso ? formatUtc(iso) : undefined;
 }
 
+/** "sha256:d618a37c…" — enough of a digest to compare against the ledger. */
+function shortHash(hash: string | undefined): string | undefined {
+  if (!hash || hash.startsWith("fixture-")) return undefined;
+  const separator = hash.indexOf(":");
+  const digest = separator >= 0 ? hash.slice(separator + 1) : hash;
+  return `${separator >= 0 ? hash.slice(0, separator + 1) : ""}${digest.slice(0, 12)}…`;
+}
+
 export default function DecisionBar({
   finding,
   reviewer,
   record,
+  signing = false,
+  signError,
   defaultRejectReason = DEFAULT_REJECT_REASON,
   onApprove,
   onReject,
@@ -159,20 +166,38 @@ export default function DecisionBar({
         ) : null}
 
         <div className="flex items-center justify-between gap-4 px-5 py-3">
-          <p className="text-body text-ink-2">
-            Signing as <span className="font-medium text-ink">{reviewer}</span>
-            <span className="text-ink-3"> · {SIGNING_PROVIDER}</span>
-          </p>
+          <div className="min-w-0">
+            <p aria-live="polite" className="text-body text-ink-2">
+              {signing ? (
+                <>
+                  Signing with{" "}
+                  <span className="font-medium text-ink">{SIGNING_PROVIDER}</span>
+                  <span className="text-ink-3"> · as {reviewer}…</span>
+                </>
+              ) : (
+                <>
+                  Signing as <span className="font-medium text-ink">{reviewer}</span>
+                  <span className="text-ink-3"> · {SIGNING_PROVIDER}</span>
+                </>
+              )}
+            </p>
+            {signError ? (
+              <p role="alert" className="mt-0.5 text-caption text-alert">
+                Not signed — {signError}
+              </p>
+            ) : null}
+          </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {choosingReason ? (
               <button
                 type="button"
+                disabled={signing}
                 onClick={() => {
                   setChoosingReason(false);
                   setReason(defaultRejectReason);
                 }}
-                className="rounded px-2 py-2 text-body text-ink-3 hover:text-ink-2 focus-visible:shadow-selected focus-visible:outline-none"
+                className="rounded px-2 py-2 text-body text-ink-3 hover:text-ink-2 focus-visible:shadow-selected focus-visible:outline-none disabled:text-line-strong"
               >
                 Cancel rejection
               </button>
@@ -180,6 +205,7 @@ export default function DecisionBar({
 
             <button
               type="button"
+              disabled={signing}
               aria-expanded={choosingReason}
               aria-label={
                 choosingReason
@@ -194,7 +220,7 @@ export default function DecisionBar({
                 onReject?.(finding.id, reason);
                 setChoosingReason(false);
               }}
-              className="rounded border border-line bg-surface px-3.5 py-2 text-body font-medium text-alert hover:bg-alert-soft focus-visible:shadow-selected focus-visible:outline-none"
+              className="rounded border border-line bg-surface px-3.5 py-2 text-body font-medium text-alert hover:bg-alert-soft focus-visible:shadow-selected focus-visible:outline-none disabled:text-line-strong disabled:hover:bg-surface"
             >
               Reject finding
             </button>
@@ -202,11 +228,12 @@ export default function DecisionBar({
             {/* The one shadow-action element while the finding is open. */}
             <button
               type="button"
+              disabled={signing}
               aria-label={`Approve finding — ${finding.label}`}
               onClick={() => onApprove?.(finding.id)}
-              className="rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none"
+              className="rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line-strong disabled:shadow-none"
             >
-              Approve finding
+              {signing ? "Signing…" : "Approve finding"}
             </button>
           </div>
         </div>
@@ -218,6 +245,10 @@ export default function DecisionBar({
   const approved = finding.status === "approved";
   const signedAt = formatSignedAt(record?.signedAt);
   const rejectReason = record?.reason ? REJECT_REASON[record.reason] : undefined;
+  const hash = shortHash(record?.contentHash);
+  const recordUrl = record?.signedDocumentUrl?.startsWith(SERVED_RECORD_PREFIX)
+    ? record.signedDocumentUrl
+    : undefined;
 
   return (
     <div
@@ -249,6 +280,23 @@ export default function DecisionBar({
             ) : null}
             <span className="text-ink-3"> · {SIGNING_PROVIDER}</span>
           </p>
+
+          {hash || recordUrl ? (
+            <p className="mt-0.5 text-caption text-ink-3">
+              {hash ? <span className="tabular font-mono">{hash}</span> : null}
+              {hash && recordUrl ? " · " : null}
+              {recordUrl ? (
+                <a
+                  href={recordUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-ink-2 underline decoration-line-strong underline-offset-2 hover:text-ink"
+                >
+                  Open signed record
+                </a>
+              ) : null}
+            </p>
+          ) : null}
 
           {record?.note ? (
             <p className="mt-1 line-clamp-2 text-caption text-ink-2">

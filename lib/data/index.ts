@@ -56,6 +56,7 @@ export type {
   ScoredTrustBreakdown,
   UnscoredTrustBreakdown,
   TrustScoreBreakdown,
+  RunData,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
@@ -76,4 +77,5 @@ export {
   getEvents,
   getCoverage,
   getDocumentAvgConfidence,
+  getFixtureRun,
 } from "./fixtures";
