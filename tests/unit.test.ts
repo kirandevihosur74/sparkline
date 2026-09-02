@@ -156,8 +156,8 @@ function storedRun(): StoredRun {
     completedAt: "2026-09-02T05:00:30.000Z",
     status: "complete",
     bundle: [
-      { id: "doc-a", title: "Memo", author: "Halcyon", docType: "investment-memo", datedAt: "2026-03-20", fileName: "doc-a.pdf", sourcePath: "documents/doc-a.pdf" },
-      { id: "doc-b", title: "IE Report", author: "Ardenfell", docType: "engineering-report", datedAt: "2026-02-10", fileName: "doc-b.pdf", sourcePath: "documents/doc-b.pdf" },
+      { id: "doc-a", title: "Memo", author: "Halcyon", docType: "investment-memo", datedAt: "2026-03-20", fileName: "doc-a.pdf", sourcePath: "documents/doc-a.pdf", source: "sample" },
+      { id: "doc-b", title: "IE Report", author: "Ardenfell", docType: "engineering-report", datedAt: "2026-02-10", fileName: "doc-b.pdf", sourcePath: "documents/doc-b.pdf", source: "sample" },
     ],
     sizes: { "doc-a": 1000, "doc-b": 2000 },
     stages: [
@@ -248,4 +248,23 @@ test("orderFindings and deltaLabel are stable helpers", () => {
     "Δ 10 MW · 4%"
   );
   assert.equal(deltaLabel(claim({ value: "Q4 2027" }), claim({ value: "Q1 2028" })), "values differ");
+});
+
+// ---------------------------------------------------------------------------
+// Printed-date sniffing for uploaded documents — pure.
+// ---------------------------------------------------------------------------
+import { sniffPrintedDate } from "../lib/dates";
+import { titleFromFileName } from "../lib/runs/bundle";
+
+test("sniffPrintedDate reads the first printed date in several spellings", () => {
+  assert.equal(sniffPrintedDate("Investment Committee Memo\nDated March 20, 2026\n"), "2026-03-20");
+  assert.equal(sniffPrintedDate("Report · 10 February 2026 · Ardenfell"), "2026-02-10");
+  assert.equal(sniffPrintedDate("Version 2026-02-10 (final)"), "2026-02-10");
+  assert.equal(sniffPrintedDate("Sept 3, 2026 and earlier: 2025-01-01"), "2026-09-03", "earliest position wins");
+  assert.equal(sniffPrintedDate("no date here, only 250 MW and $186M"), undefined);
+});
+
+test("titleFromFileName turns a file name into a readable title", () => {
+  assert.equal(titleFromFileName("wrenfield-ic-memo_v3.PDF"), "wrenfield ic memo v3");
+  assert.equal(titleFromFileName(".pdf"), "Untitled document");
 });

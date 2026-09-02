@@ -86,9 +86,11 @@ export async function analyze(
   // relative to the FIRST document's claim (the memo, in the demo).
   const claimsByDoc: Record<string, ExtractedClaim[]> = {};
   const pages: Record<string, number> = {};
+  const dates: Record<string, string> = {};
   docs.forEach((d, i) => {
     claimsByDoc[d.documentId] = extracted[i].claims;
     pages[d.documentId] = extracted[i].pageCount;
+    if (extracted[i].printedDate) dates[d.documentId] = extracted[i].printedDate!;
   });
   const allClaims = docs.flatMap((d) => claimsByDoc[d.documentId]);
   stage({
@@ -291,6 +293,7 @@ export async function analyze(
     trustScore,
     analyzedAt: new Date().toISOString(),
     pages,
+    dates,
     ...(liveCheckFailure ? { liveCheckFailure } : {}),
   };
 }

@@ -472,7 +472,7 @@ function DocumentPane({
 
       <ViewerEmbed
         ref={viewerRef}
-        documentUrl={documentUrl(active.source.documentId)}
+        documentUrl={documentUrl(active.source.documentId, documents)}
         page={claimPage}
         onVisiblePageChange={setVisiblePage}
       />
@@ -525,6 +525,8 @@ function documentName(
 }
 
 /** See TODO(schema-gap: Document) on DocumentPane. */
-function documentUrl(documentId: string): string {
-  return `/${documentId}.pdf`;
+function documentUrl(documentId: string, documents: DocumentMeta[]): string {
+  // An uploaded document is served by the app; a sample document sits in
+  // /public under its id. DocumentMeta.url carries the answer when it differs.
+  return documents.find((doc) => doc.id === documentId)?.url ?? `/${documentId}.pdf`;
 }
