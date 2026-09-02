@@ -173,6 +173,6 @@ operations per signature.
 ## Known limits
 
 - The run store is the local filesystem. A serverless deploy needs object storage before live runs and signing work there.
-- Only the committed bundle can be analyzed; there is no upload route.
+- Uploads are stored on the local filesystem with the run; nothing is retained beyond that directory.
 - The reviews index lists fixture reviews; live runs are reachable by URL but not listed yet.
 - Assignment and countersignatures are frontend records; the backend `ReviewRecord` names one reviewer per signed row.
