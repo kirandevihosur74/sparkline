@@ -1,8 +1,16 @@
 import { CLAIM_REGISTRY } from "./claims-registry";
 import type { ContradictionFlag, ExtractedClaim } from "./types";
 
-/** Variance above this (percent, relative to doc A's value) is a conflict. */
-const NUMERIC_TOLERANCE_PCT = 0.5;
+/**
+ * Variance above this (percent, relative to doc A's value) is a conflict.
+ *
+ * EXPORTED because the UI must state this number rather than describe it. The
+ * Verification Rules screen said "more than 5%" while this compared against
+ * 0.5 — ten times off, on the screen whose whole job is telling a reviewer
+ * what the pipeline does. Any surface naming the threshold composes its
+ * sentence around this constant; none of them may write the figure as prose.
+ */
+export const NUMERIC_TOLERANCE_PCT = 0.5;
 
 function normalizeText(v: string): string {
   return v.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();

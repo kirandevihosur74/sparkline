@@ -1120,8 +1120,6 @@ export interface FindingAssignment {
  */
 export interface TrustFormulaTerm {
   componentId: TrustComponentId;
-  /** Blend weight, e.g. 0.4. */
-  weight: number;
   /** The component's value, 0–1 — the SAME number its bar renders. */
   value: number;
 }
@@ -1138,7 +1136,7 @@ export interface TrustFormula {
   sentence: string;
   /** In component order: extraction first, cross-document second. */
   terms: readonly [TrustFormulaTerm, TrustFormulaTerm];
-  /** "0.4 × 0.88 + 0.6 × 0.62 = 0.724". */
+  /** The operation lib/score.ts performs, e.g. "0.62 × 0.88 = 0.55". */
   arithmetic: string;
   /** What the arithmetic evaluates to, 0–1. */
   result: number;

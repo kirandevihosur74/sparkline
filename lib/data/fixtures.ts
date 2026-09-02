@@ -14,6 +14,7 @@
  * hand-simplified away.
  */
 
+import { NUMERIC_TOLERANCE_PCT } from "@/lib/contradiction";
 import type {
   ExtractedClaim,
   ContradictionFlag,
@@ -39,7 +40,6 @@ import type {
   TrustContextFact,
   TrustDistortionNote,
   TrustScoreUnavailable,
-  TrustComponentId,
   Actor,
   ActorId,
   LedgerSummary,
@@ -686,12 +686,24 @@ const findings: Finding[] = [
 // lib/score.ts is not implemented yet — this fixture mirrors its intent).
 // ---------------------------------------------------------------------------
 
+/*
+ * TRUE BY CONSTRUCTION. `blended` is not authored: lib/score.ts computes
+ * `blended = round(crossReference × avgConfidence)`, so it is computed here
+ * the same way from this run's own two components. It read 72 while the real
+ * formula on these inputs gives round(62 × 0.88) = 55 — the dial flattering
+ * the run by 17 points, on the screen that exists to explain the number.
+ * Changing either component now moves the score automatically; the two can
+ * never disagree again.
+ */
+const TRUST_EXTRACTION = 88;
+const TRUST_CROSS_REFERENCE = 62;
+
 const trustScore: TrustScore = {
-  blended: 72,
-  extraction: 88,
-  crossReference: 62,
-      formula:
-        "Start at 100, subtract materiality-weighted penalties for each conflicting, stale, or review-required claim, then scale by average extraction confidence.",
+  extraction: TRUST_EXTRACTION,
+  crossReference: TRUST_CROSS_REFERENCE,
+  blended: Math.round(TRUST_CROSS_REFERENCE * (TRUST_EXTRACTION / 100)),
+  formula:
+    "Start at 100, subtract materiality-weighted penalties for each conflicting, stale, or review-required claim, then scale by average extraction confidence.",
 };
 
 // ---------------------------------------------------------------------------
@@ -900,7 +912,11 @@ const events: PipelineEvent[] = [
   {
     timestamp: "3:52",
     message:
-      "Run complete — 12 claims, 2 flags, 2 private assumptions left unverified, trust score 72.",
+      // Composed around the score itself: this said 72 while the run recorded
+      // it, and stayed 72 after the score was corrected to the real formula.
+      // A reasoning stream that misreports the run it narrates is the same
+      // failure this phase exists to remove.
+      `Run complete — ${allClaims.length} claims, 2 flags, 2 private assumptions left unverified, trust score ${trustScore.blended}.`,
   },
 ];
 
@@ -3603,11 +3619,6 @@ export function getQueueFindings(
  * they are written down here and nowhere in the contract. When TrustScore
  * grows them, read them off it and delete this.
  */
-const TRUST_BLEND_WEIGHTS: Record<TrustComponentId, number> = {
-  extraction_quality: 0.4,
-  cross_document_agreement: 0.6,
-};
-
 /**
  * The formula strip beneath the dial: a sentence describing the blend, plus
  * the arithmetic that produces the dial's number, rendered from the REAL
@@ -3646,28 +3657,24 @@ export function getTrustFormula(
   if (score.blended === undefined) return undefined;
 
   const [extraction, crossDocument] = buildTrustBreakdown(run).components;
+
+  /*
+   * The two bars ARE the operands of the real formula — lib/score.ts scales
+   * cross-document agreement by mean extraction confidence — so the strip
+   * shows that PRODUCT. It previously rendered a 0.4/0.6 weighted SUM, an
+   * operation no code in this repo performs.
+   */
   const terms: readonly [TrustFormulaTerm, TrustFormulaTerm] = [
-    {
-      componentId: extraction.id,
-      weight: TRUST_BLEND_WEIGHTS[extraction.id],
-      value: extraction.value,
-    },
-    {
-      componentId: crossDocument.id,
-      weight: TRUST_BLEND_WEIGHTS[crossDocument.id],
-      value: crossDocument.value,
-    },
+    { componentId: crossDocument.id, value: crossDocument.value },
+    { componentId: extraction.id, value: extraction.value },
   ];
 
-  const result = terms.reduce((sum, term) => sum + term.weight * term.value, 0);
-  const arithmetic = `${terms
-    .map((term) => `${trimmedDecimal(term.weight, 1)} × ${term.value.toFixed(2)}`)
-    .join(" + ")} = ${result.toFixed(3)}`;
+  const result = terms[0].value * terms[1].value;
+  const arithmetic = `${terms[0].value.toFixed(2)} × ${terms[1].value.toFixed(2)} = ${result.toFixed(2)}`;
 
-  // Describes THIS arithmetic — see the schema-gap note above for why
-  // TrustScore.formula (the backend's own, different algorithm) is not used.
-  const sentence =
-    "Weighted blend of extraction quality (40%) and cross-document agreement (60%).";
+  // The backend's own sentence, verbatim. Nothing paraphrases it, so the
+  // words on screen and the algorithm in lib/score.ts cannot drift apart.
+  const sentence = score.formula;
 
   return { sentence, terms, arithmetic, result };
 }
@@ -3694,7 +3701,10 @@ const verificationRules: readonly VerificationRule[] = [
     id: "cross-document-conflict",
     name: "Cross-document conflict threshold",
     description:
-      "Two documents that state the same field open a contradiction when their values differ by more than 5%; anything closer is recorded as consistent.",
+      // Composed around the constant the comparator actually compares against
+      // (lib/contradiction.ts). It read "more than 5%" while the code used
+      // 0.5 — the rules screen misreporting the rule by a factor of ten.
+      `Two documents that state the same field open a contradiction when their values differ by more than ${NUMERIC_TOLERANCE_PCT}%; anything closer is recorded as consistent.`,
     active: true,
   },
   {
