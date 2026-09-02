@@ -1633,3 +1633,535 @@ export interface RunData {
    */
   ranByActorId?: ActorId;
 }
+
+// ===========================================================================
+// WORKSPACE SCREENS — Dashboard, Documents, Sources, Team, Reports
+//
+// Five nav rows that rendered a stub. Every shape below is a VIEW-MODEL over
+// records this build already holds, and every number on one is COUNTED off
+// those records on the call:
+//
+//   Documents — the DocumentMeta records on each listed run's chain, plus the
+//     per-document extraction reading getDocumentAvgConfidence() derives from
+//     that document's claims. Provider: Nutrient DWS, which did the extraction.
+//   Sources   — the QueryTrace records those runs logged: the queries, their
+//     results, and the accept/reject decision on each. Provider: SerpApi,
+//     which returned them. NOTHING else on these screens is SerpApi's.
+//   Team      — the Actor roster, with each actor's activity read off the
+//     LEDGER (getLedgerEntries): decisions signed, countersignatures, runs
+//     executed. An actor with no recorded activity SAYS so; it never shows a
+//     zero, because a zero here reads as a measurement.
+//   Dashboard — a roll-up of getWorkspaceReviews(), getCoverage() and
+//     getRunHistory(). It stores nothing of its own.
+//   Reports   — the record of ANALYSIS RUNS. There is no report entity in this
+//     build and none is invented: what exists is run history and the diff
+//     between adjacent runs, so that is what the screen lists, and its copy
+//     says as much rather than padding the screen out.
+//
+// TODO(schema-gap: Workspace): the same gap the scale signals carry — there is
+// no workspace, tenant, portfolio or assignment entity in lib/types.ts, so
+// none of these shapes round-trips through the contract. They are assembled
+// from the run registry and must be replaced, not reconciled, when a workspace
+// lands.
+//
+// TODO(schema-gap: report): there is no report, export or schedule entity
+// either. The Reports screen therefore reports RUNS. If a report entity ever
+// lands, WorkspaceRunReport is not its view-model — it is the honest stand-in
+// that existed while there was nothing to report on.
+// ===========================================================================
+
+/**
+ * Why a workspace screen cannot state something, as renderable copy.
+ *
+ * The same shape and the same discipline as TrustScoreUnavailable and
+ * QueueFilterUnresolved: an absence is TYPED and carries its own words, so no
+ * screen fills the hole with a zero. Unknown is not none.
+ */
+export interface WorkspaceUnknown {
+  /** Stands where the figure would be, e.g. "No claims extracted". */
+  headline: string;
+  /** One line, consequence before cause. */
+  reason: string;
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+/** The extraction reading on one document — mean DWS field confidence. */
+export interface WorkspaceDocumentExtractionReading {
+  /** Normalized 0–1, from getDocumentAvgConfidence(). */
+  value: number;
+  /** Already rendered, e.g. "94%". */
+  display: string;
+  /** Claims the mean was taken over — counted, not read off DocumentMeta. */
+  claimCount: number;
+  /** "Nutrient DWS" — the API that produced the confidence. */
+  provider: string;
+  /** "Nutrient DWS · 94% mean field confidence across 7 claims". */
+  text: string;
+  unavailable?: undefined;
+}
+
+/**
+ * A document the run extracted nothing from. The absence is the value: a 0%
+ * confidence bar would claim DWS read the file and found nothing legible,
+ * which is a different fact from no claims being recorded at all.
+ */
+export interface WorkspaceDocumentExtractionUnknown {
+  value?: undefined;
+  display?: undefined;
+  claimCount: 0;
+  provider: string;
+  text: string;
+  unavailable: WorkspaceUnknown;
+}
+
+export type WorkspaceDocumentExtraction =
+  | WorkspaceDocumentExtractionReading
+  | WorkspaceDocumentExtractionUnknown;
+
+/**
+ * One document the workspace holds, as the Documents screen renders it.
+ *
+ * Documents are DISTINCT BY ID across the run chain: doc-a is byte-identical
+ * on both Wrenfield runs and appears once, attributed to the newest run that
+ * read it. A revision that a later run replaced (the January engineering
+ * report) is a SEPARATE document with its own id, and it is marked superseded
+ * rather than dropped — it is what the earlier run's findings cite.
+ */
+export interface WorkspaceDocumentRow {
+  document: DocumentMeta;
+  /** The review this document belongs to — the listed head of its run chain. */
+  reviewId: string;
+  reviewTitle: string;
+  /** Where that review opens. Always present: only listed reviews are walked. */
+  reviewHref: string;
+  /** The run that actually read this file. */
+  runId: string;
+  /** That run's own label, e.g. "Run 1 of 2". */
+  runLabel: string;
+  /** "Investment memo" / "Engineering report" — DocumentMeta.docType, in words. */
+  typeLabel: string;
+  /** "608 KB", from DocumentMeta.sizeBytes. */
+  sizeText: string;
+  /** "20 Mar 2026" — the date PRINTED on the document, not the upload time. */
+  datedText: string;
+  /** "Investment memo · Halcyon Infrastructure Partners · 20 Mar 2026 · 2 pages". */
+  metaText: string;
+  extraction: WorkspaceDocumentExtraction;
+  /**
+   * TRUE when a later run of the same bundle no longer reads this file — it is
+   * a revision that was replaced. The row stays: the previous run's findings
+   * cite it, and dropping it would leave those citations pointing at nothing.
+   */
+  superseded: boolean;
+  /**
+   * Where the PDF opens — present ONLY for a document the current run reads.
+   * This build ships the current bundle's files and no others, so a superseded
+   * revision has no PDF to open and says so instead of linking at a 404.
+   */
+  viewerUrl?: string;
+  /** Why this document does not open. Present exactly when `viewerUrl` is not. */
+  unavailableNote?: string;
+}
+
+/**
+ * The Documents screen: every document the workspace holds, and the honest
+ * scope of that word.
+ *
+ * `documentCount` counts FILES, not reviews. Five of the six reviews on the
+ * index are listed with their counts only and loaded no documents at all, so
+ * the count here is far smaller than the portfolio — `scopeNote` says that in
+ * the copy rather than letting the number imply a thin workspace.
+ */
+export interface WorkspaceDocuments {
+  rows: readonly WorkspaceDocumentRow[];
+  /** Distinct documents across every listed run chain. */
+  documentCount: number;
+  /** Sum of their page counts. */
+  pageCount: number;
+  /** Claims extracted from them — counted off the claims, not off the files. */
+  claimCount: number;
+  /** How many of those documents a later run has replaced. */
+  supersededCount: number;
+  /** Reviews that loaded at least one document. */
+  reviewsWithDocuments: number;
+  /** Reviews listed with counts only, which loaded none. */
+  reviewsWithoutDocuments: number;
+  /** "3 documents · 6 pages · 17 claims extracted". */
+  text: string;
+  /** Why the document count is smaller than the review count. */
+  scopeNote: string;
+  /** "Nutrient DWS" — extraction is its output, and only extraction is. */
+  provider: string;
+}
+
+// ---------------------------------------------------------------------------
+// Sources — the live-verification screen, and the ONE screen whose data comes
+// from SerpApi
+// ---------------------------------------------------------------------------
+
+/**
+ * What the pipeline decided about a domain, aggregated over every result it
+ * returned.
+ *
+ * `mixed` exists because aggregation can produce it: the same domain could be
+ * accepted for one query and rejected for another, and collapsing that to one
+ * verdict would hide a real disagreement. No fixture produces it today.
+ */
+export type WorkspaceSourceDomainDecision = "accepted" | "rejected" | "mixed";
+
+/** One domain the live checks consulted, across every query that returned it. */
+export interface WorkspaceSourceDomain {
+  /** "restructuring.ra.kroll.com" — TraceResult.domain, verbatim. */
+  domain: string;
+  decision: WorkspaceSourceDomainDecision;
+  /** "Accepted" / "Rejected" / "Accepted on one query, rejected on another". */
+  decisionLabel: string;
+  /** Results from this domain the pipeline accepted. */
+  acceptedCount: number;
+  /** Results from this domain the pipeline rejected. */
+  rejectedCount: number;
+  /** How many results it returned in total, across every query. */
+  timesReturned: number;
+  /** Best (lowest) rank it reached on any query. */
+  bestPosition: number;
+  /**
+   * WHY, in the pipeline's own words — the distinct reasons its results
+   * carried, in first-seen order. A rejected domain always has at least one:
+   * this screen exists so a rejection is never silent.
+   */
+  reasons: readonly string[];
+  /** The best-ranked result from this domain, for its title, url and snippet. */
+  topResult: TraceResult;
+  /** "restructuring.ra.kroll.com · Accepted · returned on 2 queries". */
+  text: string;
+}
+
+/** One live-verification query, as the Sources screen lists it. */
+export interface WorkspaceSourceQuery {
+  /** The listed review whose chain this query belongs to. */
+  reviewId: string;
+  reviewTitle: string;
+  /** The run that fired it, e.g. "Run 2 of 2". */
+  runId: string;
+  runLabel: string;
+  /** The flag this query was checking. */
+  flagId: string;
+  /** The query string exactly as it was sent. */
+  query: string;
+  /** Why it was built that way — QueryTrace.rationale, verbatim. */
+  rationale: string;
+  /**
+   * The verification rule that routed the claim here, resolved from
+   * QueryTrace.triggeredBy against getVerificationRules(). Undefined when the
+   * trace names a rule this workspace does not list — the raw string is still
+   * in `ruleLabel`, so an unresolvable rule is reported, not swallowed.
+   */
+  rule?: VerificationRule;
+  /** The rule's name, or the raw `triggeredBy` string when nothing resolves. */
+  ruleLabel: string;
+  /** ISO instant the call was made. The consumer renders it with formatUtc. */
+  searchedAt: string;
+  durationMs: number;
+  /** "1.28 s" — from durationMs. */
+  durationText: string;
+  resultCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  /** "5 results · 3 accepted · 2 rejected · 1.28 s". */
+  text: string;
+}
+
+/**
+ * The Sources screen: every live source this workspace consulted, and what was
+ * done with each.
+ *
+ * SerpApi is the provider of ALL of it, and of nothing else in the app —
+ * document extraction is Nutrient DWS's, actors and decisions are records.
+ * Every count here is read off the QueryTrace records on the call.
+ */
+export interface WorkspaceSources {
+  /** "SerpApi". */
+  provider: string;
+  /** Queries in the order they ran, newest first. */
+  queries: readonly WorkspaceSourceQuery[];
+  /** Every domain returned, accepted ones first. */
+  domains: readonly WorkspaceSourceDomain[];
+  /** The domains whose evidence was used. */
+  accepted: readonly WorkspaceSourceDomain[];
+  /** The domains that were turned down, each carrying why. */
+  rejected: readonly WorkspaceSourceDomain[];
+  queryCount: number;
+  resultCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  domainCount: number;
+  /**
+   * The most recent instant a live source was actually reached. Absent when no
+   * run ever completed a query — the same absence getWorkspaceSummary()'s
+   * freshness note reports, and for the same reason.
+   */
+  lastSearchedAt?: string;
+  /** "2 queries · 10 results · 6 accepted · 4 rejected". */
+  text: string;
+  /** Reviews in the portfolio that ran no live check this build holds. */
+  reviewsWithoutQueries: number;
+  /** What the counts above do and do not cover. */
+  scopeNote: string;
+  /** Present when no query was ever logged: what to say instead of zeros. */
+  unavailable?: WorkspaceUnknown;
+}
+
+// ---------------------------------------------------------------------------
+// Team
+// ---------------------------------------------------------------------------
+
+/**
+ * One counted fact about an actor's activity. All four are read off the
+ * ledger or the portfolio — never stored on the Actor.
+ */
+export type ActorActivityFactId =
+  | "decisions"
+  | "countersignatures"
+  | "runs"
+  | "reviews_waiting";
+
+/**
+ * One line of an actor's activity.
+ *
+ * A fact is only built when its count is NON-ZERO. "0 decisions signed" reads
+ * as a measurement of someone's output; the absence of the line is the honest
+ * rendering, and an actor left with no lines at all carries
+ * ActorActivity.inactiveNote instead.
+ */
+export interface ActorActivityFact {
+  id: ActorActivityFactId;
+  value: number;
+  /** Noun phrase already agreeing with `value`: "2 decisions signed". */
+  label: string;
+  /** The same, rendered: "2 decisions signed". */
+  text: string;
+}
+
+/** One person in the workspace, with what the record says they have done. */
+export interface ActorActivity {
+  actor: Actor;
+  /** What this role is entitled to do. Fixture copy — see ActorRole. */
+  roleNote: string;
+  /** Non-zero facts only, in a fixed order. Empty when nothing is recorded. */
+  facts: readonly ActorActivityFact[];
+  /** Decisions this actor signed (countersignatures excluded). */
+  decisionCount: number;
+  /** Rows where this actor endorsed somebody else's decision. */
+  countersignatureCount: number;
+  /** Analysis runs this actor executed. A run signs nothing. */
+  runCount: number;
+  /** Reviews whose next decision is owed by this actor. */
+  waitingReviewCount: number;
+  /** Open findings on those reviews. */
+  waitingFindingCount: number;
+  /**
+   * ISO instant of this actor's most recent recorded activity — a signature or
+   * a run. Absent when the record holds nothing for them.
+   */
+  lastActiveAt?: string;
+  /** "Last recorded activity", or the say-so copy when there is no instant. */
+  lastActiveLabel: string;
+  /** Present exactly when `facts` is empty: why there is nothing to show. */
+  inactiveNote?: string;
+  /** "2 decisions signed · waiting on 2 reviews", or the inactive copy. */
+  text: string;
+}
+
+/** The Team screen: the roster, and each member's recorded activity. */
+export interface WorkspaceTeam {
+  members: readonly ActorActivity[];
+  memberCount: number;
+  /** Members with at least one recorded fact. */
+  activeCount: number;
+  /** "3 people · 2 with recorded activity". */
+  text: string;
+  /** Where the activity numbers come from, and what they therefore miss. */
+  scopeNote: string;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+/** Reviews grouped by where they have got to. Counts off getWorkspaceReviews(). */
+export interface DashboardStateGroup {
+  state: WorkspaceReviewState;
+  /** "Analyzing" / "Open findings" / "Signed off". */
+  label: string;
+  count: number;
+  /** Open findings across the reviews in this group. */
+  openFindings: number;
+  reviews: readonly WorkspaceReviewRow[];
+  /** "3 reviews · 17 open findings". */
+  text: string;
+}
+
+/** Open findings in one materiality band. Counted off the runs' own findings. */
+export interface DashboardAttentionBand {
+  materiality: Materiality;
+  /** "Critical" / "High" / "Medium" / "Low". */
+  label: string;
+  count: number;
+  /** "1 critical". */
+  text: string;
+}
+
+/**
+ * What is waiting on a decision, and how much of it can be broken down.
+ *
+ * `bands` cover ONLY the reviews with a findings queue behind them. The rest
+ * of the portfolio contributes a count and no materiality, and
+ * `countedOnlyNote` says so — the two numbers always add to
+ * `openFindingCount`, which is the arithmetic a reader can check.
+ */
+export interface DashboardAttention {
+  /** Open findings across every review on the index. */
+  openFindingCount: number;
+  bands: readonly DashboardAttentionBand[];
+  /** Open findings the bands account for. */
+  bandedCount: number;
+  /** Open findings with no materiality recorded behind them. */
+  countedOnlyCount: number;
+  /** Present when `countedOnlyCount` is non-zero. */
+  countedOnlyNote?: string;
+  /** "17 open findings · 1 critical · 1 medium · 7 low". */
+  text: string;
+}
+
+/** One row of the waiting-on roll-up: a person, the analysis, or nobody. */
+export interface DashboardWaitGroup {
+  state: WorkspaceWaitState;
+  /** Present only when `state` is "reviewer" and the reviews name somebody. */
+  actor?: Actor;
+  reviewCount: number;
+  openFindings: number;
+  /** "M. Bui · Reviewer · 2 reviews · 14 open findings". */
+  text: string;
+}
+
+/** One review's recorded trust score, for the dashboard's trust roll-up. */
+export interface DashboardTrustReading {
+  reviewId: string;
+  title: string;
+  /** The row's own reading — a score, or the typed reason there is none. */
+  trust: WorkspaceReviewTrust;
+}
+
+/**
+ * How trust MOVED between two runs of one bundle — the only cross-run trust
+ * statement this build can make, and it is a comparison of two recorded
+ * scores, not an average of anything.
+ */
+export interface DashboardTrustMovement {
+  reviewId: string;
+  title: string;
+  /** Both readings, the signed delta and its direction. From getRunDiff(). */
+  delta: RunTrustDelta;
+  /** "Run 1 of 2 → Run 2 of 2". */
+  runText: string;
+}
+
+/**
+ * The trust roll-up.
+ *
+ * There is deliberately NO workspace average. Averaging six reviews' scores
+ * would produce a figure nothing recorded and nobody could check, and it would
+ * silently mix reviews of different sizes. The screen shows each recorded
+ * reading, says how many recorded none, and shows the one real movement
+ * between two runs of the same bundle.
+ */
+export interface DashboardTrust {
+  /** Reviews that recorded a score, highest first. */
+  readings: readonly DashboardTrustReading[];
+  scoredCount: number;
+  /** Reviews with no score, each of which says why on its own row. */
+  unavailableCount: number;
+  movements: readonly DashboardTrustMovement[];
+  /** "5 reviews scored · 1 recorded no score". */
+  text: string;
+  /** Why there is no single workspace number here. */
+  note: string;
+}
+
+/**
+ * The Dashboard: a roll-up over getWorkspaceReviews(), getCoverage() and
+ * getRunHistory(), storing nothing of its own.
+ *
+ * Everything on it is available from the accessors it is built from; it exists
+ * so the screen makes one call and cannot assemble the same numbers a second,
+ * differing way.
+ */
+export interface WorkspaceDashboard {
+  reviewCount: number;
+  states: readonly DashboardStateGroup[];
+  attention: DashboardAttention;
+  waiting: readonly DashboardWaitGroup[];
+  trust: DashboardTrust;
+}
+
+// ---------------------------------------------------------------------------
+// Reports — the record of analysis runs
+// ---------------------------------------------------------------------------
+
+/**
+ * One analysis run in the workspace-wide record, with the diff it produced
+ * against the run before it.
+ *
+ * `diff` is computed by comparing THIS run's findings against its immediate
+ * predecessor's — every count in it falls out of that comparison. The first
+ * run of a bundle has no predecessor and carries none: `comparisonNote` says
+ * that instead, because "0 new · 0 resolved" would report a comparison that
+ * never happened.
+ */
+export interface WorkspaceRunRow {
+  run: AnalysisRun;
+  /** The listed review this run belongs to — the head of its chain. */
+  reviewId: string;
+  reviewTitle: string;
+  /** Where that review opens. */
+  reviewHref: string;
+  /** Where THIS run opens — a superseded run stays addressable by its own id. */
+  runHref: string;
+  /** "K. Shah · Pipeline owner", or the say-so copy when nobody is recorded. */
+  ownerText: string;
+  /** "11 findings · 12 claims · 2 documents" — counted off the run. */
+  outcomeText: string;
+  /** Present only when this run had a predecessor to compare against. */
+  diff?: RunDiff;
+  /** The diff in words, or why there is nothing to compare. */
+  comparisonNote: string;
+}
+
+/**
+ * The Reports screen.
+ *
+ * THERE IS NO REPORT ENTITY IN THIS BUILD and none is invented here. What the
+ * system genuinely records is analysis runs and what changed between them, so
+ * that is what this screen is: the record of runs. `headlineNote` says so in
+ * the copy — a thin screen that tells the truth beats a full one that does not.
+ */
+export interface WorkspaceRunReport {
+  /** Newest run first. */
+  rows: readonly WorkspaceRunRow[];
+  runCount: number;
+  /** Document bundles those runs analyzed. */
+  bundleCount: number;
+  /** Reviews listed with counts only, behind which no run was recorded. */
+  reviewsWithoutRuns: number;
+  /** Runs that ended with a failed stage. */
+  failedCount: number;
+  /** "2 analysis runs · 1 bundle". */
+  text: string;
+  /** Why this screen lists runs rather than reports. */
+  headlineNote: string;
+  /** What the run record does and does not cover. */
+  scopeNote: string;
+}

@@ -131,6 +131,35 @@ export type {
   DecisionLedgerEntry,
   RunLedgerEntry,
   LedgerEntry,
+  // The five workspace screens — Dashboard, Documents, Sources, Team, Reports.
+  // Every shape is a view-model over records that already exist: documents and
+  // their DWS extraction readings, the SerpApi query traces, the ledger, the
+  // review portfolio and the run chain. Nothing below stores a number
+  // (TODO(schema-gap: Workspace) / TODO(schema-gap: report))
+  WorkspaceUnknown,
+  WorkspaceDocumentExtractionReading,
+  WorkspaceDocumentExtractionUnknown,
+  WorkspaceDocumentExtraction,
+  WorkspaceDocumentRow,
+  WorkspaceDocuments,
+  WorkspaceSourceDomainDecision,
+  WorkspaceSourceDomain,
+  WorkspaceSourceQuery,
+  WorkspaceSources,
+  ActorActivityFactId,
+  ActorActivityFact,
+  ActorActivity,
+  WorkspaceTeam,
+  DashboardStateGroup,
+  DashboardAttentionBand,
+  DashboardAttention,
+  DashboardWaitGroup,
+  DashboardTrustReading,
+  DashboardTrustMovement,
+  DashboardTrust,
+  WorkspaceDashboard,
+  WorkspaceRunRow,
+  WorkspaceRunReport,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
@@ -194,4 +223,12 @@ export {
   // The ledger's rows: signed decisions AND analysis runs, ordered by when
   // they happened and told apart by `kind`
   getLedgerEntries,
+  // The five workspace screens. One accessor each, every figure counted on the
+  // call off the runs the workspace lists — see the section header in
+  // fixtures.ts for the scope rule and the per-screen provenance.
+  getWorkspaceDashboard,
+  getWorkspaceDocuments,
+  getWorkspaceSources,
+  getWorkspaceTeam,
+  getWorkspaceRunReport,
 } from "./fixtures";
