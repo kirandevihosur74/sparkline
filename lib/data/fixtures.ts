@@ -703,6 +703,12 @@ const review: ReviewSummary = {
 // score is reported at all — a run that could not finish its checks has no
 // evidence to score, so it says so instead of publishing a number.
 //
+// Two different counts fall out of that, and the copy below never states either
+// one bare: THREE is claims routed to the live check (the failure's
+// affectedClaimIds); FIVE is findings carrying the unverified verdict — those
+// three plus the two private assumptions that had no verification strategy in
+// the first place. See routedLiveCheckClaimCount / unverifiedFindingCount.
+//
 // TODO(schema-gap: pipeline): same gap as the demo run — the backend has no
 // Run entity, so a failed run is a view-model here and nowhere else. It also
 // has no notion of "routed to live verification": UNCHECKED_CLAIM_IDS below is
@@ -823,6 +829,31 @@ const degradedFindings: Finding[] = [
 ];
 
 /**
+ * The two counts this run has to keep apart — derived from the findings above,
+ * never written out, so neither can drift from what the screens render.
+ *
+ * `routedLiveCheckClaimCount` counts CLAIMS handed to the live check; every one
+ * of them was stranded when SerpApi refused the query, so it is also the
+ * failure's affectedClaimIds count. `unverifiedFindingCount` counts FINDINGS
+ * carrying the unverified verdict, and it is the larger number: it additionally
+ * covers the private assumptions that never had a verification strategy for the
+ * live check to refuse. Both are right and they count different things, so
+ * every string below that states one of them names its unit — a bare number in
+ * this run's copy reads as the other one.
+ */
+const routedLiveCheckClaimCount = UNCHECKED_CLAIM_IDS.length;
+const unverifiedFindingCount = degradedFindings.filter(
+  (finding) => finding.verdict === "unverified",
+).length;
+/** Unverified findings the live check was never going to settle either way. */
+const noStrategyFindingCount = degradedCarriedFindings.filter(
+  (finding) => finding.verdict === "unverified",
+).length;
+const degradedFlagLabel = `${degradedFlags.length} ${
+  degradedFlags.length === 1 ? "flag" : "flags"
+}`;
+
+/**
  * Trust readings for the degraded run — the two components, and NO score.
  *
  * `extraction` is unchanged (88): the same 12 claims came out of the same DWS
@@ -899,10 +930,8 @@ const degradedStages: PipelineStage[] = [
     durationMs: 812,
     metric: { value: 0, unit: "queries" },
     failure: {
-      headline:
-        "3 claims are unverified — SerpApi refused the live query on a rate limit.",
-      detail:
-        "SerpApi returned HTTP 429 with Retry-After: 60 before any result came back, so the counterparty external check never executed. Extraction and cross-document comparison had already finished and their results stand. The three claims that only a live source could settle are reported unverified rather than assumed correct — re-running the live check is the only thing that resolves them.",
+      headline: `${routedLiveCheckClaimCount} claims routed to the live check went unchecked — SerpApi refused the query on a rate limit.`,
+      detail: `SerpApi returned HTTP 429 with Retry-After: 60 before any result came back, so the counterparty external check never executed. Extraction and cross-document comparison had already finished and their results stand. The ${routedLiveCheckClaimCount} claims that only a live source could settle are reported unverified rather than assumed correct — re-running the live check is the only thing that resolves them. That number counts claims routed to the live check. The coverage bar counts findings, and ${unverifiedFindingCount} of those carry the unverified verdict: these ${routedLiveCheckClaimCount}, plus ${noStrategyFindingCount} private assumptions in the engineering report that never had a verification strategy for the live check to refuse.`,
       code: "HTTP 429",
       retryAfterSec: 60,
       affectedClaimIds: UNCHECKED_CLAIM_IDS,
@@ -940,8 +969,7 @@ const degradedEvents: PipelineEvent[] = [
   },
   {
     timestamp: "3:42",
-    message:
-      "Counterparty standing, counterparty scale and the workmanship warranty have no counterpart in the second document — routing 3 claims to live check.",
+    message: `Counterparty standing, counterparty scale and the workmanship warranty have no counterpart in the second document — routing ${routedLiveCheckClaimCount} claims to the live check.`,
   },
   {
     timestamp: "3:42",
@@ -950,22 +978,19 @@ const degradedEvents: PipelineEvent[] = [
   },
   {
     timestamp: "3:42",
-    message:
-      "Live check abandoned after the refusal. The 3 routed claims are recorded unverified — an unchecked claim is not a corroborated one.",
+    message: `Live check abandoned after the refusal. All ${routedLiveCheckClaimCount} claims routed to it are recorded unverified — an unchecked claim is not a corroborated one.`,
     verdict: "unverified",
   },
   {
     timestamp: "3:43",
-    message:
-      "Run complete with a failed stage — 12 claims, 1 flag, 5 claims left unverified, no trust score: the live check never ran.",
+    message: `Run complete with a failed stage — ${allClaims.length} claims, ${degradedFlagLabel}, ${unverifiedFindingCount} findings carrying the unverified verdict: the ${routedLiveCheckClaimCount} claims routed to the live check, plus ${noStrategyFindingCount} private assumptions with no verification strategy. No trust score — the live check never ran.`,
   },
 ];
 
 const degradedReview: ReviewSummary = {
   id: DEGRADED_REVIEW_ID,
   title: "Wrenfield Residential Solar Portfolio",
-  subtitle:
-    "250 MW distributed solar · expansion tranche diligence · 3 claims unverified, live check did not complete",
+  subtitle: `250 MW distributed solar · expansion tranche diligence · ${routedLiveCheckClaimCount} claims were routed to the live check and none completed`,
   createdAt: "2026-08-31T05:31:10.000Z",
   status: "complete",
   documents,

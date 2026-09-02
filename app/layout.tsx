@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { Poppins, Source_Serif_4 } from "next/font/google";
 import AppNav from "@/components/AppNav";
-import ProjectBar from "@/components/ProjectBar";
-import { DEMO_REVIEW_ID, getReview } from "@/lib/data";
+import ContextBar from "@/components/ContextBar";
 import "./globals.css";
 
 /* Poppins for all UI chrome — 600 is the weight ceiling. */
@@ -35,7 +34,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex h-full">
         <AppNav />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <ProjectBar label={getReview(DEMO_REVIEW_ID)?.title ?? "Sparkline"} />
+          {/* One header row on every route: the review's title inside a review
+              screen that has none of its own, the screen's own name everywhere
+              else. ContextBar decides — see components/ContextBar.tsx. */}
+          <ContextBar />
           {children}
         </main>
       </body>
