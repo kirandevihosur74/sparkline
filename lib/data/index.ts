@@ -68,6 +68,17 @@ export type {
   // typed in (view-models only — TODO(schema-gap: Workspace))
   WorkspaceStat,
   WorkspaceSummary,
+  // The review portfolio — the rows the reviews index renders. Six today: the
+  // demo run, which opens, plus five scenery reviews, which say they do not.
+  // (view-models only — TODO(schema-gap: Workspace))
+  WorkspaceReviewState,
+  WorkspaceReviewCounts,
+  WorkspaceWaitState,
+  WorkspaceReviewWait,
+  WorkspaceReviewScore,
+  WorkspaceReviewScoreUnavailable,
+  WorkspaceReviewTrust,
+  WorkspaceReviewRow,
   FindingsHeader,
   FindingsFooter,
   FindingPosition,
@@ -110,6 +121,7 @@ export {
   getLedgerSummary,
   // Scale signals
   getWorkspaceSummary,
+  getWorkspaceReviews,
   getFindingsHeader,
   getFindingsFooter,
   getFindingPosition,

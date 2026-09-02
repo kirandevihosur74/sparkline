@@ -24,11 +24,18 @@
  * refused. Nothing here special-cases it: the failed stage travels on the run's
  * own `PipelineStage.failure`, and AnalysisSummary renders ErrorPanel wherever
  * it finds one. A degraded run therefore cannot be displayed as a clean one.
+ *
+ * AN UNKNOWN ID IS NOT THE DEMO RUN. This page used to fall back to
+ * DEMO_REVIEW_ID for any id the data layer did not recognise, which meant
+ * /reviews/scenery-calder-point rendered Wrenfield's 72% dial, Wrenfield's
+ * components and Wrenfield's findings under another review's URL — one run's
+ * diligence presented as another's, the exact fabrication this data layer
+ * exists to refuse. It now says there is nothing to show, the same answer
+ * /reviews/[id]/audit has always given.
  */
 
 import AnalysisScreen, { type AnalysisPhase } from "@/components/AnalysisScreen";
 import {
-  DEMO_REVIEW_ID,
   getClaims,
   getCoverage,
   getEvents,
@@ -55,24 +62,26 @@ export default async function AnalysisPage({
 }: PageProps<"/reviews/[id]">) {
   const [{ id }, query] = await Promise.all([params, searchParams]);
 
-  // The accessors default to DEMO_REVIEW_ID; an id the data layer does not
-  // know falls back to the same semantics the review screen uses rather than
-  // 404-ing the demo.
-  const review = getReview(id) ?? getReview(DEMO_REVIEW_ID);
-  const reviewId = review?.id ?? DEMO_REVIEW_ID;
-  const breakdown = getTrustBreakdown(reviewId);
+  // No fallback. An id the data layer does not know is not the demo run, and
+  // rendering the demo run's analysis under it would be a claim about a review
+  // nothing was ever loaded for.
+  const review = getReview(id);
+  const breakdown = review ? getTrustBreakdown(review.id) : undefined;
 
   if (!review || !breakdown) {
     // Failures name the consequence before the cause.
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-8">
-        <p className="text-body text-ink-3">
-          There is nothing to show about this run: no review with this id exists
-          in the data layer, and neither does the demo run.
+        <p className="max-w-prose text-body text-ink-3">
+          {review
+            ? "There is nothing to show about this run: it recorded no analysis, and another run\u2019s results are not this run\u2019s."
+            : "There is nothing to show about this run: no review with this id exists in the data layer, and another run\u2019s analysis is not this run\u2019s."}
         </p>
       </div>
     );
   }
+
+  const reviewId = review.id;
 
   const initialPhase: AnalysisPhase =
     readParam(query[STATE_PARAM]) === ANALYZING ? ANALYZING : "complete";

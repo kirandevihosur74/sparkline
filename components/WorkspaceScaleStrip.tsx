@@ -2,7 +2,7 @@
  * WorkspaceScaleStrip — the one line above the reviews index that says this
  * run is not the only one.
  *
- * "2 active reviews · 2 reviewers", with the live-source freshness note
+ * "6 reviews · 2 reviewers", with the live-source freshness note
  * right-aligned behind a 5px dot. It is a SIGNAL, not a control: nothing here
  * is clickable, because nothing here has anywhere to go.
  *

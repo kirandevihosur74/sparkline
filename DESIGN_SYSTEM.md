@@ -74,7 +74,18 @@ Thresholds:
 - Funnel counters count up during their stage (`requestAnimationFrame`).
 - Reasoning-stream lines fade up; max 5 visible; oldest drops.
 - Stage-rail rules transition transparent → ink → accent.
+- A reviews-index row whose review is still **analyzing** pulses its 5px
+  status dot and slides an *indeterminate* bar beneath it. The bar reports
+  that work is happening and never how much is left — nothing in this build
+  can measure a run's progress, so no fraction may be drawn. Both animations
+  are the only motion outside the analysis screen, and they stop at the row:
+  the rest of the list is still.
 - **Nothing else animates.**
+
+Every entry above is off under `prefers-reduced-motion: reduce`. The analyzing
+row's static treatment is not a blank space: the dot stays solid and the bar
+becomes a full-width `line-strong` band — full width so it states no position,
+muted so it is not read as a completed `accent` fill.
 
 ---
 

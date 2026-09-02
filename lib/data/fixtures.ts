@@ -38,12 +38,18 @@ import type {
   TrustScoreComponent,
   TrustContextFact,
   TrustDistortionNote,
+  TrustScoreUnavailable,
   TrustComponentId,
   Actor,
   ActorId,
   LedgerSummary,
   WorkspaceStat,
   WorkspaceSummary,
+  WorkspaceReviewRow,
+  WorkspaceReviewCounts,
+  WorkspaceReviewState,
+  WorkspaceReviewTrust,
+  WorkspaceReviewWait,
   FindingsHeader,
   FindingsFooter,
   FindingPosition,
@@ -1165,6 +1171,30 @@ interface FixtureRun {
   auditRecords: AuditRecord[];
   stages: PipelineStage[];
   events: PipelineEvent[];
+  /**
+   * Whether this run is a REVIEW THE WORKSPACE HOLDS, or an alternate state of
+   * one it already holds.
+   *
+   * The degraded run is the second kind: it is the SAME Wrenfield bundle with
+   * its live check refused, sharing the demo run's title and documents. Listing
+   * it would put two rows with one project name on the index, distinguishable
+   * only by reading their subtitles — worse than one row, and a portfolio count
+   * of 7 that nobody could reconcile with 6 projects. So it stays fully
+   * addressable by id (every accessor and /reviews/{id} still serve it) and is
+   * excluded from the portfolio: getWorkspaceReviews() and the workspace strip
+   * both count `listed` runs and nothing else.
+   */
+  listed: boolean;
+  /**
+   * The actor this run sits with — who owes it the next decision.
+   *
+   * TODO(schema-gap: assignment): there is no assignment anywhere in the domain
+   * model. ReviewRecord names an actor only AFTER a decision is signed, so the
+   * contract cannot express whose queue an unsigned review is in. Fixture-only,
+   * and undefined is honest: a run nobody is named against reports that rather
+   * than borrowing the last actor who touched it.
+   */
+  assignedTo?: ActorId;
 }
 
 const runs: Record<string, FixtureRun> = {
@@ -1177,6 +1207,10 @@ const runs: Record<string, FixtureRun> = {
     auditRecords,
     stages,
     events,
+    listed: true,
+    // The 9 findings still open are decisions, and M. Bui is the actor who
+    // signs decisions on this ledger (P. Ramanathan countersigns them).
+    assignedTo: actors.bui.id,
   },
   [DEGRADED_REVIEW_ID]: {
     review: degradedReview,
@@ -1187,6 +1221,8 @@ const runs: Record<string, FixtureRun> = {
     auditRecords: degradedAuditRecords,
     stages: degradedStages,
     events: degradedEvents,
+    // Not a seventh project — the same bundle in its failed state. See `listed`.
+    listed: false,
   },
 };
 
@@ -1529,6 +1565,17 @@ export function getTrustBreakdown(
 // workspace policy was last edited. No policy in this build is editable, so
 // nothing records when it changed.
 //
+// ONE OTHER SET OF TYPED-IN NUMBERS EXISTS, and it is not here because it is
+// not a single scalar: SCENERY_REVIEWS, further down in the scale-signals
+// section, gives the workspace five reviews beyond the demo bundle. Those rows
+// are declared scenery on their face — every one of them renders with
+// `WorkspaceReviewRow.scenery === true`, exactly as this block requires of a
+// typed-in value — and they are held to the same internal arithmetic as
+// everything else: a row's finding total is COMPUTED from its own open and
+// signed counts, never written a second time, and a row with no claim corpus
+// behind it carries no href, so nothing can open it as a review. See the
+// section header there for the full argument.
+//
 // Everything else the UI shows is COUNTED — off the run registry, a run's
 // findings, its documents, its ledger rows, or a timestamp a query trace
 // logged. That is the rule this block exists to police: if a value is written
@@ -1727,38 +1774,394 @@ export function getLedgerSummary(
 }
 
 // ---------------------------------------------------------------------------
-// Scale signals
+// Scale signals — the portfolio first, then the strip and the lines derived
+// from it.
 // ---------------------------------------------------------------------------
 
-/**
- * Every review the workspace holds, in registry order.
- *
- * This IS the workspace: there is no workspace entity, so the set of runs the
- * registry can serve is the only defensible answer to "how many reviews are
- * there". Two today; a third fixture run makes the strip read three with no
- * copy edit and nobody typing a number.
- */
-function listReviews(): ReviewSummary[] {
-  return Object.values(runs).map((run) => run.review);
+// ---------------------------------------------------------------------------
+// THE REVIEW PORTFOLIO — the six rows the reviews index renders.
+//
+// The workspace is not one project. It holds the demo bundle plus five more
+// reviews, and the index is where a reader sees that before entering any of
+// them.
+//
+// TWO KINDS OF ROW, AND THE DIFFERENCE IS ON THE FACE OF EACH ONE:
+//
+//   1. A row built from a RUN in the registry above. Everything on it is
+//      counted — its finding counts off getCoverage(), its score off the run's
+//      own TrustScore — and it carries an href, because there is a full review
+//      behind it. The Wrenfield demo run is the only one today.
+//
+//   2. A row built from a SCENERY REVIEW below. Its counts are typed in, so it
+//      renders with `scenery: true` (the row-level twin of
+//      WorkspaceStat.presentational) and it carries NO href at all.
+//
+// WHY SCENERY REVIEWS ARE NOT RUNS. A run in the registry answers
+// getFindings(), getClaims(), getAuditRecords() and getTrustBreakdown();
+// giving these five reviews one would mean inventing a claim corpus, a
+// findings queue and a ledger for each — five fake diligence bundles, which is
+// exactly the fabrication this data layer exists to refuse. They are records of
+// a review's SHAPE (name, status, how many findings, who has it) and nothing
+// else. Keeping them out of `runs` is also what makes "nothing opens them"
+// structural rather than a promise: resolveRun() has never heard of these ids,
+// so every accessor in this file returns empty for them, and their rows carry
+// no href to click.
+//
+// WHAT IS STILL HONEST ABOUT THEM. Each row's finding total is COMPUTED from
+// its own open and signed counts, so a row cannot claim a total its own numbers
+// miss; a signed-off review's signed count IS its ledger (there are no ledger
+// rows because the record is the whole of what this build knows about it); and
+// every actor named on a row is a real workspace actor, so the reviewer count
+// on the strip covers them without moving.
+//
+// TODO(schema-gap: Workspace): as above — no workspace entity, no assignment,
+// no portfolio. When one lands, these five records are deleted rather than
+// migrated: they are scenery, not data.
+// ---------------------------------------------------------------------------
+
+interface SceneryReviewBase {
+  id: string;
+  title: string;
+  subtitle: string;
+  status: ReviewSummary["status"];
+  /** Findings still waiting on a decision. */
+  openFindings: number;
+  /** Findings closed by a signed decision — this number IS the review's ledger. */
+  signedFindings: number;
+  /** Whose queue it sits in. Absent on a review waiting on nobody. */
+  assignedTo?: ActorId;
 }
 
 /**
- * Distinct actors who have signed a decision anywhere in the workspace.
- *
- * Same basis as the audit ledger's reviewer count — getLedgerSummary()'s own
- * signatories, merged across runs by actor id — so the reviews index and the
- * ledger cannot report different numbers of reviewers.
+ * A scenery review either recorded a blended score (0–100, as the backend
+ * stores one) or it recorded none and says why — never both, and never
+ * neither. The same choice RunTrustScore makes, enforced by the union.
  */
-function workspaceSignatories(): Actor[] {
-  const signatories: Actor[] = [];
-  for (const reviewId of Object.keys(runs)) {
-    for (const actor of getLedgerSummary(reviewId).signatories) {
-      if (!signatories.some((known) => known.id === actor.id)) {
-        signatories.push(actor);
-      }
-    }
+type SceneryReview = SceneryReviewBase &
+  (
+    | { trustScoreRaw: number; scoreUnavailable?: undefined }
+    | { trustScoreRaw?: undefined; scoreUnavailable: TrustScoreUnavailable }
+  );
+
+/**
+ * The five reviews that make this a workspace rather than a project.
+ *
+ * Ids are prefixed "scenery-" so one can be recognised for what it is at a
+ * glance — in a log line as much as in this file.
+ *
+ * Assignment follows the workspace's own policy: M. Bui signs decisions, so
+ * reviews with undecided findings sit with her; P. Ramanathan approves, and
+ * Ashcombe's remaining items are the high-materiality kind
+ * COUNTERSIGNATURE_POLICY routes to an approver. K. Shah runs pipelines and
+ * signs nothing, so no review waits on him.
+ */
+const SCENERY_REVIEWS: readonly SceneryReview[] = [
+  {
+    id: "scenery-tule-basin",
+    title: "Tule Basin Storage Portfolio",
+    subtitle:
+      "180 MW / 720 MWh storage · acquisition diligence · Cormorant Grid Partners",
+    status: "analyzing",
+    // Mid-analysis: no finding has been produced yet, so both counts are zero
+    // and the row reads "No findings yet" rather than printing a total.
+    openFindings: 0,
+    signedFindings: 0,
+    scoreUnavailable: {
+      headline: "Trust score pending",
+      reason:
+        "Analysis is still running, so this review has recorded no readings to blend.",
+    },
+    assignedTo: "actor-bui",
+  },
+  {
+    id: "scenery-calder-point",
+    title: "Calder Point Wind Repower",
+    subtitle: "88 MW onshore wind · repower diligence · Meridian Renewables",
+    status: "complete",
+    openFindings: 5,
+    signedFindings: 1,
+    trustScoreRaw: 66,
+    assignedTo: "actor-bui",
+  },
+  {
+    id: "scenery-ashcombe-fund-ii",
+    title: "Ashcombe Distributed Solar Fund II",
+    subtitle:
+      "140 MW distributed solar · warehouse facility diligence · Halcyon Infrastructure Partners",
+    status: "complete",
+    openFindings: 3,
+    signedFindings: 2,
+    trustScoreRaw: 74,
+    assignedTo: "actor-ramanathan",
+  },
+  {
+    id: "scenery-ferrisbrook-hydro",
+    title: "Ferrisbrook Hydro Refinance",
+    subtitle:
+      "62 MW run-of-river hydro · refinancing diligence · Kestrel Energy Capital",
+    status: "complete",
+    // Waits on nobody: every finding on it was closed by a signed decision.
+    openFindings: 0,
+    signedFindings: 6,
+    trustScoreRaw: 91,
+  },
+  {
+    id: "scenery-marlowe-bay",
+    title: "Marlowe Bay Offshore Tranche A",
+    subtitle:
+      "420 MW offshore wind · tranche A financing · Cormorant Grid Partners",
+    status: "complete",
+    openFindings: 0,
+    signedFindings: 4,
+    trustScoreRaw: 88,
+  },
+];
+
+/** Why a scenery row cannot be opened, in the reader's terms. */
+const SCENERY_UNAVAILABLE_NOTE =
+  "There is nothing to open here: this review is listed with its counts only — no documents, findings or signed records were loaded behind it.";
+
+/** The lead-in every waiting-on cell shares. Copy, so no component types it. */
+const WAITING_ON = "Waiting on";
+/** What a row says when it has produced no finding yet. */
+const NO_FINDINGS_YET = "No findings yet";
+/** What a row says at zero open — never a bare "0 open". */
+const NO_OPEN_FINDINGS = "No open findings";
+
+const STATE_LABEL: Record<WorkspaceReviewState, string> = {
+  analyzing: "Analyzing",
+  open_findings: "Open findings",
+  signed_off: "Signed off",
+};
+
+/** Index order: analyzing first, then open findings, then signed off. */
+const STATE_RANK: Record<WorkspaceReviewState, number> = {
+  analyzing: 0,
+  open_findings: 1,
+  signed_off: 2,
+};
+
+/**
+ * Where a review has got to — derived, never stored. A run still analyzing is
+ * analyzing whatever its counts say; a finished one with anything undecided has
+ * open findings; one with nothing undecided is signed off.
+ */
+function reviewState(
+  status: ReviewSummary["status"],
+  open: number,
+): WorkspaceReviewState {
+  if (status === "analyzing") return "analyzing";
+  return open > 0 ? "open_findings" : "signed_off";
+}
+
+/**
+ * The finding counts on a row. `total` is computed here from `open` and
+ * `signed` and is never passed in, so the three numbers cannot disagree.
+ */
+function buildReviewCounts(open: number, signed: number): WorkspaceReviewCounts {
+  const total = open + signed;
+  const segments =
+    total === 0
+      ? [NO_FINDINGS_YET]
+      : [
+          open > 0 ? `${open} open` : NO_OPEN_FINDINGS,
+          signed > 0 ? `${signed} signed` : "",
+          plural(total, "finding", "findings"),
+        ];
+  return { open, signed, total, text: joinSegments(segments) };
+}
+
+/**
+ * The waiting-on cell. A signed-off review says it waits on nobody and names
+ * how many decisions closed it — the one cell that must never be blank, because
+ * blank reads as missing data rather than as finished work.
+ */
+function buildReviewWait(
+  state: WorkspaceReviewState,
+  actor: Actor | undefined,
+  signed: number,
+): WorkspaceReviewWait {
+  if (state === "signed_off") {
+    return {
+      state: "nobody",
+      text: joinSegments([
+        `${WAITING_ON} nobody`,
+        plural(signed, "decision signed", "decisions signed"),
+      ]),
+    };
   }
-  return signatories;
+  if (state === "analyzing") {
+    // Nobody is holding this up yet — the run is. The reviewer it lands with is
+    // still named, so the row says who picks it up rather than saying nothing.
+    return {
+      state: "analysis",
+      actor,
+      text: joinSegments([
+        `${WAITING_ON} analysis`,
+        actor ? `assigned to ${actor.name}` : "",
+      ]),
+    };
+  }
+  // Open findings. An unassigned review says so; it does not borrow a name.
+  return actor
+    ? {
+        state: "reviewer",
+        actor,
+        text: joinSegments([`${WAITING_ON} ${actor.name}`, actor.role]),
+      }
+    : {
+        state: "reviewer",
+        text: `${WAITING_ON} a reviewer — this review is assigned to nobody`,
+      };
+}
+
+/** 0.72 → "72%". The one place a row's score becomes characters. */
+function percentLabel(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+/** A score when the review recorded one, the reason when it did not. */
+function buildReviewTrust(
+  raw: number | undefined,
+  unavailable: TrustScoreUnavailable | undefined,
+): WorkspaceReviewTrust {
+  if (raw === undefined) {
+    return {
+      unavailable: unavailable ?? {
+        headline: "Trust score unavailable",
+        reason: "This review recorded no trust readings.",
+      },
+    };
+  }
+  const value = normalizeConfidence(raw);
+  return { value, display: percentLabel(value) };
+}
+
+/** A row for a real run: every number counted off the run itself. */
+function rowFromRun(reviewId: string, run: FixtureRun): WorkspaceReviewRow {
+  const coverage = getCoverage(reviewId);
+  // Findings closed by a signed decision. On this ledger those are exactly the
+  // flagIds its decision rows carry — the countersignature rows share those ids
+  // and close nothing further — so the coverage rollup and the ledger agree.
+  const signed = coverage.approved + coverage.rejected;
+  const counts = buildReviewCounts(coverage.open, signed);
+  const state = reviewState(run.review.status, counts.open);
+  const score = run.review.trustScore;
+
+  return {
+    id: run.review.id,
+    title: run.review.title,
+    subtitle: run.review.subtitle ?? "",
+    status: run.review.status,
+    state,
+    stateLabel: STATE_LABEL[state],
+    counts,
+    // Narrowed the same way buildTrustBreakdown narrows it: a run that recorded
+    // no blend carries the reason, and TrustScore has no such field to read.
+    trust:
+      score.blended === undefined
+        ? buildReviewTrust(undefined, score.unavailable)
+        : buildReviewTrust(score.blended, undefined),
+    waiting: buildReviewWait(
+      state,
+      run.assignedTo ? actorsById[run.assignedTo] : undefined,
+      counts.signed,
+    ),
+    href: `/reviews/${run.review.id}`,
+    scenery: false,
+  };
+}
+
+/** A row for a scenery review: its own counts, no href, declared scenery. */
+function rowFromScenery(record: SceneryReview): WorkspaceReviewRow {
+  const counts = buildReviewCounts(record.openFindings, record.signedFindings);
+  const state = reviewState(record.status, counts.open);
+
+  return {
+    id: record.id,
+    title: record.title,
+    subtitle: record.subtitle,
+    status: record.status,
+    state,
+    stateLabel: STATE_LABEL[state],
+    counts,
+    trust: buildReviewTrust(record.trustScoreRaw, record.scoreUnavailable),
+    waiting: buildReviewWait(
+      state,
+      record.assignedTo ? actorsById[record.assignedTo] : undefined,
+      counts.signed,
+    ),
+    unavailableNote: SCENERY_UNAVAILABLE_NOTE,
+    scenery: true,
+  };
+}
+
+/**
+ * Index order, and it is readable off the rows themselves: analyzing first,
+ * then open findings by how many are open, then signed off by how many
+ * decisions closed them. Ties break on title, compared codepoint-wise rather
+ * than through localeCompare — locale-dependent ordering differs between the
+ * server pass and the client pass, the hydration bug class lib/format.ts exists
+ * to prevent.
+ */
+function compareReviewRows(a: WorkspaceReviewRow, b: WorkspaceReviewRow): number {
+  if (STATE_RANK[a.state] !== STATE_RANK[b.state]) {
+    return STATE_RANK[a.state] - STATE_RANK[b.state];
+  }
+  if (a.counts.open !== b.counts.open) return b.counts.open - a.counts.open;
+  if (a.counts.signed !== b.counts.signed) {
+    return b.counts.signed - a.counts.signed;
+  }
+  return a.title < b.title ? -1 : a.title > b.title ? 1 : 0;
+}
+
+/**
+ * THE REVIEWS INDEX, in render order.
+ *
+ * Six rows: the Wrenfield demo run, which is real and opens, plus the five
+ * scenery reviews, which are listed and do not. The degraded run is NOT here —
+ * it is the demo bundle in its failed state, not a seventh project, and it is
+ * excluded by `FixtureRun.listed` rather than by a filter on its id.
+ *
+ * This accessor is also the workspace's review count: getWorkspaceSummary()
+ * counts the rows it returns, so the strip above the index and the list beneath
+ * it cannot report different totals.
+ */
+export function getWorkspaceReviews(): readonly WorkspaceReviewRow[] {
+  const rows: WorkspaceReviewRow[] = [
+    ...Object.entries(runs)
+      .filter(([, run]) => run.listed)
+      .map(([reviewId, run]) => rowFromRun(reviewId, run)),
+    ...SCENERY_REVIEWS.map(rowFromScenery),
+  ];
+  return rows.sort(compareReviewRows);
+}
+
+/**
+ * Distinct actors this workspace can name: everyone who has signed a row on a
+ * listed run's ledger, plus everyone a listed review is waiting on.
+ *
+ * The ledger half is the same basis the audit ledger's reviewer count uses
+ * (getLedgerSummary().signatories), so the index and the ledger cannot report
+ * different numbers. The second half keeps the count true of the PORTFOLIO
+ * rather than of one run: a reviewer holding a review nobody has signed yet is
+ * still a reviewer here, and a strip counting only signatures would leave them
+ * out. Both halves resolve to real Actors, so nobody is counted twice under two
+ * spellings.
+ */
+function workspaceReviewers(): Actor[] {
+  const reviewers: Actor[] = [];
+  const add = (actor: Actor | undefined) => {
+    if (actor && !reviewers.some((known) => known.id === actor.id)) {
+      reviewers.push(actor);
+    }
+  };
+  for (const [reviewId, run] of Object.entries(runs)) {
+    if (!run.listed) continue;
+    for (const actor of getLedgerSummary(reviewId).signatories) add(actor);
+  }
+  for (const row of getWorkspaceReviews()) add(row.waiting.actor);
+  return reviewers;
 }
 
 /**
@@ -1784,11 +2187,21 @@ function lastLiveCheckAt(): string | undefined {
 /**
  * The strip above the reviews index.
  *
- * NOTHING here is presentational. The review count is the number of reviews in
- * the run registry; the reviewer count is the distinct actors who have signed a
- * ledger row, the same basis the audit ledger's own "2 reviewers" uses; and the
- * freshness note is the real logged `searchedAt` of the latest query trace,
- * rendered as an ABSOLUTE UTC instant through formatUtc.
+ * NOTHING here is presentational. The review count is LITERALLY the rows the
+ * index renders — `getWorkspaceReviews().length`, the same call the list makes,
+ * so the strip cannot claim a portfolio bigger or smaller than the one directly
+ * beneath it. The reviewer count is the distinct actors the workspace can name
+ * (see workspaceReviewers), which starts from the same signatories the audit
+ * ledger's own "2 reviewers" uses. The freshness note is the real logged
+ * `searchedAt` of the latest query trace, rendered as an ABSOLUTE UTC instant
+ * through formatUtc.
+ *
+ * THE WORD "ACTIVE" IS GONE from the first stat, deliberately. It read "N
+ * active reviews" when the workspace held one project; two of the six rows are
+ * now signed off, and calling a finished review active is a claim the rows
+ * underneath it visibly contradict — a reader can count them. The number is the
+ * one the task fixes (it must equal the rows rendered); the adjective was the
+ * part that stopped being true, so the adjective went.
  *
  * Absolute, not "4 minutes ago", for two reasons: the fixtures are fixed in
  * time, so any elapsed figure would be false, and a relative time computed at
@@ -1796,13 +2209,13 @@ function lastLiveCheckAt(): string | undefined {
  * bug class lib/format.ts exists to prevent.
  */
 export function getWorkspaceSummary(): WorkspaceSummary {
-  const reviewCount = listReviews().length;
-  const signedBy = workspaceSignatories().length;
+  const reviewCount = getWorkspaceReviews().length;
+  const signedBy = workspaceReviewers().length;
   const stats: WorkspaceStat[] = [
     {
       value: reviewCount,
       display: groupThousands(reviewCount),
-      label: reviewCount === 1 ? "active review" : "active reviews",
+      label: reviewCount === 1 ? "review" : "reviews",
       presentational: false,
     },
     {

@@ -768,6 +768,130 @@ export interface WorkspaceSummary {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The review portfolio — the rows the reviews index renders
+//
+// Same TODO(schema-gap: Workspace) as the strip above: there is no workspace,
+// no tenant and no review-assignment entity in lib/types.ts, so every shape
+// below is a frontend-only view-model. `ReviewSummary` is the closest thing the
+// contract has to a row, and it is not close enough — it carries a document
+// array, a claim count and a run's trust readings, none of which a row needs,
+// and it carries NOTHING about who a review is waiting on, which is the one
+// column a portfolio exists to show.
+//
+// A row is therefore BUILT, never stored: getWorkspaceReviews() derives every
+// field of it from a run (counts off getCoverage(), the score off the run's own
+// TrustScore) or, for the scenery reviews, from that review's own record. No
+// component types any of it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a review has got to, DERIVED from its status and its own counts:
+ * still analyzing, decided-nothing-yet-or-partly, or fully signed off.
+ *
+ * A closed union so the index can key a total Record off it — a fourth state
+ * would fail the build rather than render an unlabelled row.
+ */
+export type WorkspaceReviewState = "analyzing" | "open_findings" | "signed_off";
+
+/**
+ * The finding counts on one row.
+ *
+ * `total` is ALWAYS `open + signed` — it is computed from them, never stored
+ * beside them, so a row cannot advertise a total its own two numbers miss. On a
+ * real run all three come off getCoverage(); on a scenery review they come off
+ * that review's own record, where `signed` IS its ledger (it has no ledger rows
+ * because it has no claim corpus — see SceneryReview in fixtures.ts).
+ */
+export interface WorkspaceReviewCounts {
+  /** Findings still waiting on a decision. */
+  open: number;
+  /** Findings closed by a signed decision. */
+  signed: number;
+  /** open + signed. */
+  total: number;
+  /** "9 open · 2 signed · 11 findings", or "No findings yet" at zero. */
+  text: string;
+}
+
+/**
+ * WHO a row is waiting on. Three cases, and none of them is a blank cell:
+ *
+ *   - `reviewer` — a person owes this review a decision; `actor` is that person.
+ *   - `analysis` — the run has not finished, so no person is holding it up yet;
+ *     `actor` is the reviewer it lands with when it does.
+ *   - `nobody` — every decision is signed. The row SAYS so; a signed-off review
+ *     with an empty column reads as missing data rather than as finished work.
+ */
+export type WorkspaceWaitState = "analysis" | "reviewer" | "nobody";
+
+/** The waiting-on cell, fully derived. */
+export interface WorkspaceReviewWait {
+  state: WorkspaceWaitState;
+  /** Absent only when `state` is "nobody". */
+  actor?: Actor;
+  /** "Waiting on M. Bui · Reviewer" / "Waiting on nobody · 6 decisions signed". */
+  text: string;
+}
+
+/** A row whose review recorded a blended trust score. */
+export interface WorkspaceReviewScore {
+  /** Normalized 0–1, as every other confidence in this app. */
+  value: number;
+  /** Already rendered, e.g. "72%" — the index prints this, not `value`. */
+  display: string;
+  unavailable?: undefined;
+}
+
+/**
+ * A row whose review has NO score — the analyzing run, and any run whose checks
+ * could not finish. Mirrors the ScoredTrustBreakdown / UnscoredTrustBreakdown
+ * split: the absence is typed and carries its own copy, never a held-down zero.
+ */
+export interface WorkspaceReviewScoreUnavailable {
+  value?: undefined;
+  display?: undefined;
+  unavailable: TrustScoreUnavailable;
+}
+
+export type WorkspaceReviewTrust =
+  | WorkspaceReviewScore
+  | WorkspaceReviewScoreUnavailable;
+
+/** One row of the reviews index. Every field derived — see the section note. */
+export interface WorkspaceReviewRow {
+  id: string;
+  title: string;
+  /** Short metadata line in the demo run's own style: scale · work · sponsor. */
+  subtitle: string;
+  /** The run's own status, as the contract spells it. */
+  status: ReviewSummary["status"];
+  /** Derived from `status` and `counts` — never stored on a record. */
+  state: WorkspaceReviewState;
+  /** "Analyzing" / "Open findings" / "Signed off". */
+  stateLabel: string;
+  counts: WorkspaceReviewCounts;
+  trust: WorkspaceReviewTrust;
+  waiting: WorkspaceReviewWait;
+  /**
+   * Where the row opens — PRESENT ONLY when a full review actually exists
+   * behind it. A scenery row has no href at all, so the index cannot link one:
+   * `/reviews/{unknown-id}` falls back to the demo run, and a row that opened
+   * somebody else's findings would be the worst lie on the screen.
+   */
+  href?: string;
+  /** Why this row does not open. Present exactly when `href` is absent. */
+  unavailableNote?: string;
+  /**
+   * TRUE means this row's numbers are FIXTURE SCENERY: internally consistent
+   * (its total is its own open + signed, its score is its own record's), but
+   * counted off nothing — there are no claims, no findings and no ledger rows
+   * behind them. It is the row-level twin of WorkspaceStat.presentational, and
+   * it is FALSE on every row built from a real run.
+   */
+  scenery: boolean;
+}
+
 /**
  * The line above the findings list.
  *

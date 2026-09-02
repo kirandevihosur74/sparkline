@@ -20,12 +20,16 @@
  *
  * Shadow discipline: exactly ONE element on the screen carries `shadow-action`,
  * and it is the primary action of whichever state is rendered — "Approve
- * finding" while the finding is open, "Next finding →" once it is resolved and
- * the approve button no longer exists. There is never more than one at a time.
+ * finding" while the finding is open; once it is resolved and the approve
+ * button no longer exists, "Next finding →" while another finding is still
+ * waiting, and "Open all reviews →" when none is. There is never more than one
+ * at a time, and never a dead one: the last sign-off of a run leads on to the
+ * reviews index rather than to a disabled button.
  *
  * Client component: it owns the reject-reason choice and the decision callbacks.
  */
 
+import Link from "next/link";
 import { useState } from "react";
 import { getDecisionSignature } from "@/lib/data";
 import type {
@@ -48,6 +52,26 @@ import { formatUtc } from "@/lib/format";
  * attributes signatures; do not reconcile the two.
  */
 const SIGNING_PROVIDER = "Nutrient DWS";
+
+/**
+ * Where the queue leads once nothing in it is open: the reviews index, the
+ * workspace's own list.
+ *
+ * This is a ROUTE, not a value — app/reviews/page.tsx exists and there is
+ * nothing in lib/data to read a path off. It deliberately carries no review
+ * id: the end of one run's queue belongs to the workspace, not back inside the
+ * run that was just finished. Any href that DOES name a review still takes
+ * that id from the data layer.
+ */
+const REVIEWS_HREF = "/reviews";
+
+/**
+ * The resolved strip's primary action, whichever it is. One class string so
+ * "Next finding →" and "Open all reviews →" cannot drift apart, and so the
+ * single `shadow-action` on this screen is written exactly once.
+ */
+const ONWARD_ACTION_CLASS =
+  "rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none";
 
 /**
  * Reject reasons, in the order they are offered. Copy is a design-system
@@ -127,6 +151,12 @@ export interface DecisionBarProps {
   /** Always receives the chosen structured reason alongside the finding id. */
   onReject?: (findingId: string, reason: RejectReason) => void;
   onUndo?: (findingId: string) => void;
+  /**
+   * Advances to the next finding still open. ABSENT means there is no next
+   * one — the resolved strip then leads to the reviews index instead of
+   * offering a disabled button, because a run's final sign-off must not
+   * dead-end.
+   */
   onNext?: (findingId: string) => void;
 }
 
@@ -310,6 +340,15 @@ export default function DecisionBar({
               {record.note}
             </p>
           ) : null}
+
+          {onNext ? null : (
+            /* The system says what is left: nothing. This was the last finding
+               in the queue waiting on a decision, which is why the action
+               beside it leaves the run. */
+            <p className="mt-1 text-caption text-ink-3">
+              Nothing else in this queue is waiting on a decision.
+            </p>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
@@ -324,16 +363,28 @@ export default function DecisionBar({
 
           {/*
            * With the finding resolved there is no Approve button, so the strip's
-           * primary action carries the single shadow-action on the screen.
+           * primary action carries the single shadow-action on the screen —
+           * exactly one of these two renders, so there is still only one.
+           *
+           * Which one is not a style choice: while another finding is open the
+           * work continues inside this run, and when none is, the only true
+           * onward step is out of it. The old build rendered the same button
+           * disabled at the end of the queue, which ended the demo on a
+           * control that could not be pressed.
            */}
-          <button
-            type="button"
-            disabled={!onNext}
-            onClick={() => onNext?.(finding.id)}
-            className="rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line-strong disabled:shadow-none"
-          >
-            Next finding →
-          </button>
+          {onNext ? (
+            <button
+              type="button"
+              onClick={() => onNext(finding.id)}
+              className={ONWARD_ACTION_CLASS}
+            >
+              Next finding →
+            </button>
+          ) : (
+            <Link href={REVIEWS_HREF} className={ONWARD_ACTION_CLASS}>
+              Open all reviews →
+            </Link>
+          )}
         </div>
       </div>
     </div>
