@@ -65,6 +65,10 @@ import type {
   VerificationRule,
   WorkspacePolicy,
   ComplianceCopy,
+  Shortcut,
+  ShortcutGroup,
+  ShortcutGroupId,
+  ShortcutSheet,
 } from "./types";
 import { normalizeConfidence } from "./types";
 import { formatUtc } from "../format";
@@ -2697,4 +2701,161 @@ const complianceCopy: ComplianceCopy = {
 /** The two compliance lines: the audit footer and the analyzing-screen note. */
 export function getComplianceCopy(): ComplianceCopy {
   return complianceCopy;
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcuts
+//
+// UI configuration, and only that — no schema-gap marker belongs here. A key
+// binding has no backend counterpart and needs none; nothing below is a value
+// a server could one day supply. It lives in this module because three
+// surfaces render the same bindings (the review screen's hint strip, the kbd
+// chips on the buttons, the ? sheet) and a key name typed into one of them can
+// drift from the other two. One list, three readers.
+//
+// REFUSED BINDINGS — decisions, not omissions:
+//
+//   "/" focuses search. Search is on this project's do-not-build list, so
+//   there is no field for "/" to focus. Bound, it would do nothing, or move
+//   focus to something that is not a search; printed in the strip or the
+//   sheet, it would be the UI claiming a capability the build cannot back.
+//   Not shipped, and not listed anywhere on screen.
+//
+//   "Enter" jumps the viewer to the finding's source page — refused, but for
+//   the opposite reason to "/". The jump is real now: ViewerEmbed takes a
+//   `page` prop and ReviewDetail's toolbar drives it from a "Jump to claim"
+//   button, which reports the position it moved to. That button is an ordinary
+//   <button>, so Enter already fires it once it has focus, as it fires Approve
+//   and Reject. Listing "Enter" here would install a window-level binding that
+//   preventDefaults the key away from all three, breaking the platform meaning
+//   of Enter to duplicate a control that is on screen and already keyboard-
+//   reachable. The binding stays refused; the affordance is the button.
+//
+// WHY GLOBAL HOLDS ONE KEY. "?" opens the sheet and that is the whole group.
+// The two candidates were considered and declined:
+//
+//   The theme toggle is a THREE-state control — Light / Dark / System, where
+//   System is a real position and not the absence of one. A single key can
+//   only flip or cycle it: flipping would have to pretend one of the three
+//   does not exist, and cycling makes the reviewer press an unlabelled key up
+//   to three times to land somewhere. It is also a set-once rail preference
+//   (ViewerEmbed reloads the document pane on a theme change, losing the page
+//   position), so it is the last thing to reach for mid-review.
+//
+//   Navigation between screens would need a chord vocabulary — a lead key and
+//   a destination — that nothing in this app implements or teaches, to save a
+//   click on a nav rail that is on screen at all times.
+//
+// Inventing either to make the group look fuller would put keys on the sheet
+// that the build does not honour, which is the one thing this list exists to
+// prevent.
+// ---------------------------------------------------------------------------
+
+/** Sheet section headings. Components uppercase them; the copy is title case. */
+const SHORTCUT_GROUP_LABEL: Record<ShortcutGroupId, string> = {
+  selection: "Selection",
+  review: "Review",
+  global: "Global",
+};
+
+/** Section order in the sheet: move, then decide, then everywhere. */
+const SHORTCUT_GROUP_ORDER: readonly ShortcutGroupId[] = [
+  "selection",
+  "review",
+  "global",
+];
+
+/** A binding before its `text` is joined — the only place a key is written. */
+type ShortcutSpec = Omit<Shortcut, "text">;
+
+/**
+ * The five bindings, in the order the sheet and the strip read them.
+ *
+ * `hint` is a gate, not decoration: the hint strip renders on the review
+ * screen alone, so a binding may only be flagged when it does what it says on
+ * THAT screen. Every shipped binding passes today — J/K move the queue
+ * selection, A and R drive the decision bar, ? opens the sheet from anywhere,
+ * the review screen included — because the two bindings that would not have
+ * passed were refused above rather than printed. A later binding that works
+ * only on the audit or analysis screen goes in the sheet with `hint: false`
+ * and the strip never mentions it.
+ */
+const SHORTCUT_SPECS: readonly ShortcutSpec[] = [
+  {
+    key: "J",
+    description: "Move to the next finding",
+    group: "selection",
+    hint: true,
+  },
+  {
+    key: "K",
+    description: "Move to the previous finding",
+    group: "selection",
+    hint: true,
+  },
+  {
+    key: "A",
+    description: "Approve the selected finding",
+    group: "review",
+    hint: true,
+  },
+  {
+    /*
+     * Rejection is two-step in DecisionBar — the reason row opens first and
+     * the decision is signed with the reason chosen — so the description says
+     * the reason comes first rather than promising a one-key rejection the bar
+     * does not perform.
+     */
+    key: "R",
+    description: "Reject the selected finding, then choose a reason",
+    group: "review",
+    hint: true,
+  },
+  {
+    key: "?",
+    description: "Show every keyboard shortcut",
+    group: "global",
+    hint: true,
+  },
+];
+
+const shortcuts: readonly Shortcut[] = SHORTCUT_SPECS.map((spec) => ({
+  ...spec,
+  text: joinSegments([spec.key, spec.description]),
+}));
+
+/** Every binding, flat, in render order. */
+export function getShortcuts(): readonly Shortcut[] {
+  return shortcuts;
+}
+
+/**
+ * The bindings the review screen's hint strip shows — the `hint` flag applied,
+ * never the whole list assumed. See SHORTCUT_SPECS for what the flag promises.
+ */
+export function getHintShortcuts(): readonly Shortcut[] {
+  return shortcuts.filter((shortcut) => shortcut.hint);
+}
+
+/**
+ * The bindings grouped for the ? sheet, in section order.
+ *
+ * A group with no bindings is dropped rather than rendered as an empty
+ * heading: the sheet lists what exists.
+ */
+export function getShortcutGroups(): readonly ShortcutGroup[] {
+  return SHORTCUT_GROUP_ORDER.map((id) => ({
+    id,
+    label: SHORTCUT_GROUP_LABEL[id],
+    shortcuts: shortcuts.filter((shortcut) => shortcut.group === id),
+  })).filter((group) => group.shortcuts.length > 0);
+}
+
+/** The ? sheet in full: heading, sections, and the verb that dismisses it. */
+export function getShortcutSheet(): ShortcutSheet {
+  return {
+    title: "Keyboard shortcuts",
+    groups: getShortcutGroups(),
+    closeLabel: "Close shortcuts",
+  };
 }

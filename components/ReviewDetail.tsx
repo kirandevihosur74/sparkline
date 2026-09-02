@@ -25,8 +25,8 @@ import ConfidenceMeter from "./ConfidenceMeter";
 import DecisionBar from "./DecisionBar";
 import EvidenceFaceoff from "./EvidenceFaceoff";
 import QueryTracePanel from "./QueryTracePanel";
-import ViewerEmbed from "./ViewerEmbed";
-import { useState } from "react";
+import ViewerEmbed, { type ViewerHandle } from "./ViewerEmbed";
+import { useRef, useState } from "react";
 import type {
   AuditRecord,
   ClaimFinding,
@@ -174,10 +174,12 @@ export default function ReviewDetail({
           <ClaimEvidence finding={finding} documents={documents} />
         )}
 
-        {/* Remounts per finding so the pane always opens on the finding's own
-            primary source rather than on whichever tab was last chosen. */}
+        {/* NOT keyed by finding: two findings can cite the same file, and
+            remounting would restart the viewer's WASM to show a document that
+            is already on screen. The pane resets its own tab selection when
+            the finding changes and moves the page instead. */}
         <DocumentPane
-          key={finding.id}
+          findingId={finding.id}
           sources={sourcesOf(finding)}
           documents={documents}
         />
@@ -290,28 +292,74 @@ interface PaneSource {
 }
 
 /**
- * The toolbar DESIGN_SYSTEM.md item 5 asks for, wrapped around the shipped
- * ViewerEmbed: filename, provider, and the page the claim sits on. The tab
- * strip appears only when a finding cites two documents (a contradiction), so
- * the reviewer can read both sides of the disagreement in their own pages.
+ * The toolbar DESIGN_SYSTEM.md item 5 asks for, wrapped around ViewerEmbed:
+ * filename, provider, page position, and "Jump to claim". The tab strip
+ * appears only when a finding cites two documents (a contradiction), so the
+ * reviewer can read both sides of the disagreement in their own pages.
  *
  * TODO(schema-gap: Document): DocumentMeta names a `fileName` but the backend
  * persists NO addressable URL for an uploaded document — the upload route
  * streams bytes to DWS and keeps nothing. Until a canonical Document carries
  * its own URL, the served copy is resolved by document id below.
  *
- * The viewer cannot yet be scrolled to the claim: ViewerEmbed takes only
- * `documentUrl`, with no `page` / `highlightClaimId` props, so the pane STATES
- * the page instead of offering a "Jump to claim" control that would do nothing.
+ * ── WHAT "JUMP TO CLAIM" ACTUALLY DOES ──────────────────────────────────────
+ *
+ * It moves the mounted viewer to `ClaimSource.page` through
+ * `ViewerHandle.jumpToPage` — a `setViewState` call on the live instance, so
+ * it is immediate and costs no WASM restart. Being a real `<button>`, Enter
+ * and Space fire it once it has focus; there is no separate key handler here,
+ * and no screen-level Enter binding, because binding Enter would swallow it
+ * from the Approve and Reject buttons that need it. See the REFUSED BINDINGS
+ * note in lib/data/fixtures.ts: it can be un-refused now that the page prop
+ * exists, and that is a change to the shortcut list, not to this file.
+ *
+ * The button is disabled — never hidden, and never a no-op — in the three
+ * cases where there is nowhere to go, each of which the copy already accounts
+ * for:
+ *   · no document mounted yet (`visiblePage` is null); the viewer itself says
+ *     "Loading document…",
+ *   · the claim's page is already the visible page; the line to its left reads
+ *     "Claim on page 2 of 2 · showing page 2", which is the reason,
+ *   · the run recorded a page this file does not have; the note below the row
+ *     says so outright.
+ *
+ * The page position is read back OUT of the viewer rather than assumed: the
+ * reviewer can scroll the document by hand, and a toolbar that kept claiming
+ * "showing page 2" while page 1 was on screen would be the pane lying about
+ * the evidence.
+ *
+ * TODO(schema-gap: claim anchors): DESIGN_SYSTEM.md item 5 also lists
+ * `highlightClaimId`, and it is deliberately not a prop yet — nothing in this
+ * build can draw it. `ClaimSource` carries a page and a text `excerpt` but no
+ * rects, no text offsets and no annotation id, so the viewer could only guess
+ * at the location by re-searching the excerpt string. A prop that took an id
+ * and highlighted nothing is the dead control this project keeps refusing.
+ * Add it when ClaimSource grows a bounding box.
  */
 function DocumentPane({
+  findingId,
   sources,
   documents,
 }: {
+  findingId: string;
   sources: PaneSource[];
   documents: DocumentMeta[];
 }) {
   const [activeKey, setActiveKey] = useState(sources[0]?.key);
+  /* The pane opens on the finding's own primary source. This used to be a
+     `key` on the element, which threw the viewer away with the tab selection;
+     resetting the one piece of state that is actually stale lets two findings
+     in the same file share one loaded document. */
+  const [shownFindingId, setShownFindingId] = useState(findingId);
+  if (shownFindingId !== findingId) {
+    setShownFindingId(findingId);
+    setActiveKey(sources[0]?.key);
+  }
+
+  /** Where the viewer actually is. Null until a document is mounted. */
+  const [visiblePage, setVisiblePage] = useState<number | null>(null);
+  const viewerRef = useRef<ViewerHandle>(null);
+
   const active = sources.find((s) => s.key === activeKey) ?? sources[0];
 
   if (!active) {
@@ -326,53 +374,100 @@ function DocumentPane({
   }
 
   const doc = documents.find((d) => d.id === active.source.documentId);
+  const pageCount = doc?.pageCount;
+  const claimPage = active.source.page;
+  /* A page the file does not have is a page the viewer cannot reach. When the
+     document's length is unknown, we do not pretend to know either. */
+  const claimPageExists =
+    pageCount === undefined || (claimPage >= 1 && claimPage <= pageCount);
+  const canJump =
+    visiblePage !== null && claimPageExists && visiblePage !== claimPage;
+
+  const claimPosition = pageCount
+    ? `Claim on page ${claimPage} of ${pageCount}`
+    : `Claim on page ${claimPage}`;
 
   return (
     <section aria-label="Source document" className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded border border-line bg-surface px-4 py-2.5">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="min-w-0 truncate text-label font-medium text-ink">
-            {doc?.fileName ?? active.source.documentId}
-          </span>
-          <span className="shrink-0 rounded-sm border border-line px-1.5 py-0.5 text-micro text-ink-3 uppercase">
-            {PROVIDER_VIEWER}
-          </span>
-          <span className="tabular text-caption text-ink-3">
-            {doc
-              ? `Claim on page ${active.source.page} of ${doc.pageCount}`
-              : `Claim on page ${active.source.page}`}
-          </span>
+      <div className="rounded border border-line bg-surface px-4 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="min-w-0 truncate text-label font-medium text-ink">
+              {doc?.fileName ?? active.source.documentId}
+            </span>
+            <span className="shrink-0 rounded-sm border border-line px-1.5 py-0.5 text-micro text-ink-3 uppercase">
+              {PROVIDER_VIEWER}
+            </span>
+            <span className="tabular text-caption text-ink-3">
+              {visiblePage === null
+                ? claimPosition
+                : `${claimPosition} · showing page ${visiblePage}`}
+            </span>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={!canJump}
+              onClick={() => viewerRef.current?.jumpToPage(claimPage)}
+              aria-label={`Jump to the claim on page ${claimPage}`}
+              /* A stable hook, not a value on screen — the same seam
+                 ReviewWorkspace already uses to reach the reject control
+                 (`[role="group"] button[aria-expanded]`). A screen-level Enter
+                 binding can click this without importing anything from here
+                 and without matching on copy, and it inherits `disabled` for
+                 free: when there is nowhere to go the key does nothing, which
+                 is the honest outcome. */
+              data-jump-to-claim=""
+              className="rounded border border-line bg-surface px-2.5 py-1 text-caption font-medium text-ink hover:bg-subtle focus-visible:shadow-selected focus-visible:outline-none disabled:text-ink-3 disabled:hover:bg-surface"
+            >
+              Jump to claim
+            </button>
+
+            {sources.length > 1 ? (
+              <div
+                aria-label="Source document"
+                role="group"
+                className="flex shrink-0 gap-px overflow-hidden rounded border border-line"
+              >
+                {sources.map((paneSource) => {
+                  const selected = paneSource.key === active.key;
+                  return (
+                    <button
+                      key={paneSource.key}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => setActiveKey(paneSource.key)}
+                      className={`px-2.5 py-1 text-caption ${
+                        selected
+                          ? "bg-subtle font-medium text-ink"
+                          : "bg-surface text-ink-3 hover:text-ink-2"
+                      } focus-visible:shadow-selected focus-visible:outline-none`}
+                    >
+                      {documentName(paneSource.source.documentId, documents)}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         </div>
 
-        {sources.length > 1 ? (
-          <div
-            aria-label="Source document"
-            role="group"
-            className="flex shrink-0 gap-px overflow-hidden rounded border border-line"
-          >
-            {sources.map((paneSource) => {
-              const selected = paneSource.key === active.key;
-              return (
-                <button
-                  key={paneSource.key}
-                  type="button"
-                  aria-pressed={selected}
-                  onClick={() => setActiveKey(paneSource.key)}
-                  className={`px-2.5 py-1 text-caption ${
-                    selected
-                      ? "bg-subtle font-medium text-ink"
-                      : "bg-surface text-ink-3 hover:text-ink-2"
-                  } focus-visible:shadow-selected focus-visible:outline-none`}
-                >
-                  {documentName(paneSource.source.documentId, documents)}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
+        {/* The system says what it does not know — and what it cannot reach. */}
+        {claimPageExists ? null : (
+          <p className="mt-2 text-caption text-ink-3">
+            There is nowhere to jump: the run recorded this claim on page{" "}
+            {claimPage}, and this file has {pageCount}.
+          </p>
+        )}
       </div>
 
-      <ViewerEmbed documentUrl={documentUrl(active.source.documentId)} />
+      <ViewerEmbed
+        ref={viewerRef}
+        documentUrl={documentUrl(active.source.documentId)}
+        page={claimPage}
+        onVisiblePageChange={setVisiblePage}
+      />
     </section>
   );
 }

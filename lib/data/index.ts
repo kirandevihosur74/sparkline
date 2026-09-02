@@ -102,6 +102,15 @@ export type {
   WorkspacePolicy,
   // Compliance copy
   ComplianceCopy,
+  // Keyboard shortcuts — presentation config, NOT a domain shape, so no
+  // schema-gap marker: a key binding has no backend counterpart and needs
+  // none. One list feeds the hint strip, the kbd chips and the ? sheet, so no
+  // component types a key name. "/" (focus search) and Enter (jump the viewer
+  // to the source page) are deliberately unbound — see types.ts for why.
+  ShortcutGroupId,
+  Shortcut,
+  ShortcutGroup,
+  ShortcutSheet,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
@@ -146,4 +155,10 @@ export {
   getVerificationRules,
   getWorkspacePolicy,
   getComplianceCopy,
+  // Keyboard shortcuts — the flat list, the hint strip's subset, and the
+  // grouped sheet, all off one set of bindings
+  getShortcuts,
+  getHintShortcuts,
+  getShortcutGroups,
+  getShortcutSheet,
 } from "./fixtures";
