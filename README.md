@@ -66,7 +66,7 @@ lib/
 └── data/             # the data layer the UI reads: fixtures, live-run adapter, registry
 components/           # screens 1–6 (see DESIGN_SYSTEM.md, docs/walkthrough.md)
 documents/            # synthetic demo PDFs (see documents/README.md)
-docs/                 # demo claims, query log, video script, live-run notes
+docs/                 # architecture (Mermaid), demo claims, query log, video script, live-run notes
 scripts/              # smoke tests, run:live, test:pipeline, test:e2e
 data/                 # runtime output (runs, ledgers, signed records) — gitignored
 ```
