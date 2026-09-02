@@ -1175,6 +1175,90 @@ export interface ComplianceCopy {
 }
 
 // ---------------------------------------------------------------------------
+// Keyboard shortcuts
+//
+// Presentation config, not a domain shape: a key binding is a property of this
+// UI and of nothing else, so there is deliberately NO `TODO(schema-gap: …)`
+// marker on anything below. The backend has no counterpart to a keystroke and
+// needs none — nothing here is a value a server could one day supply.
+//
+// The point of typing them at all is that three surfaces render the same
+// bindings — the review screen's hint strip, the kbd chips on the buttons, and
+// the ? sheet — and a key name or a description typed into any one of them can
+// drift from the other two. One list, three readers, no disagreement possible.
+//
+// WHAT IS NOT BOUND, and why the gaps are decisions rather than oversights:
+//
+//   "/" focuses search — REFUSED. Search is on this project's do-not-build
+//   list; there is no search field on any screen. Bound, "/" would either do
+//   nothing or move focus to something that is not a search, and a hint strip
+//   or sheet advertising it would be the UI claiming a capability the build
+//   cannot back. Omitted from the bindings and from the sheet.
+//
+//   "Enter" jumps the viewer to the finding's source page — REFUSED, but for
+//   the OPPOSITE reason to "/". The jump is real in this build: ViewerEmbed
+//   takes a 1-based `page` prop and ReviewDetail's document pane drives it
+//   from a visible "Jump to claim" button that reports the page it moved to.
+//   That button is an ordinary <button>, as are Approve and Reject, so Enter
+//   already activates whichever of them has focus. Listing "Enter" here would
+//   install a window-level binding that preventDefaults the key away from all
+//   three — replacing controls the reviewer can see and reach with Tab by one
+//   they cannot — so the platform meaning of Enter is left alone and the
+//   affordance stays the button. Same reasoning as ReviewWorkspace's, which
+//   is why the intent is wired in useShortcuts and never passed.
+// ---------------------------------------------------------------------------
+
+/**
+ * Which part of the app a binding belongs to — the sheet's section order.
+ *
+ * `selection` moves through the queue, `review` decides the finding in front
+ * of you, `global` works wherever the app is. GLOBAL holds ONE entry and that
+ * is the honest size of it: see SHORTCUTS in fixtures.ts for why the theme
+ * toggle and the nav did not earn keys.
+ */
+export type ShortcutGroupId = "selection" | "review" | "global";
+
+/** One binding, as the kbd chips and the sheet render it. */
+export interface Shortcut {
+  /**
+   * The key in DISPLAY form — "J", "?", "Enter" — rendered verbatim in a kbd
+   * chip. Not an event code: no component compares this to `event.key`
+   * blindly, it is what the reviewer reads on screen.
+   */
+  key: string;
+  /** Short imperative — what pressing it does, in the words the screen uses. */
+  description: string;
+  group: ShortcutGroupId;
+  /**
+   * Whether the review screen's hint strip shows it. The strip sits on ONE
+   * screen, so a binding may only be flagged here if it does what it says on
+   * that screen — a shortcut that is real but screen-specific elsewhere would
+   * be sheet-only.
+   */
+  hint: boolean;
+  /** "J · Move to the next finding" — the chip and its description, joined. */
+  text: string;
+}
+
+/** One section of the ? sheet. Never empty: a group with no bindings is omitted. */
+export interface ShortcutGroup {
+  id: ShortcutGroupId;
+  /** Section heading: "Selection" / "Review" / "Global". */
+  label: string;
+  shortcuts: readonly Shortcut[];
+}
+
+/** The ? sheet: its heading, its sections, and the label that dismisses it. */
+export interface ShortcutSheet {
+  /** "Keyboard shortcuts" — also the label of any control that opens it. */
+  title: string;
+  /** In group order, each with at least one binding. */
+  groups: readonly ShortcutGroup[];
+  /** "Close" — the dismiss control's verb. */
+  closeLabel: string;
+}
+
+// ---------------------------------------------------------------------------
 // One run, as the data layer holds it — the shape every accessor resolves
 // through. Fixture runs are authored in this shape; live runs are adapted into
 // it from a stored AnalysisResult (lib/data/adapt.ts).

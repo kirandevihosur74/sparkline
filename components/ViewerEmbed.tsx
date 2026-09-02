@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
+import type { Ref } from "react";
+import type { Instance } from "@nutrient-sdk/viewer";
 import { useThemeStamp } from "./ThemeToggle";
 
 /**
@@ -12,6 +20,40 @@ import { useThemeStamp } from "./ThemeToggle";
  *
  * Reusable: drop into any container with a resolved height (h-full +
  * min-h-0 parent, or an explicit height) and pass the document URL.
+ *
+ * ── PAGE NUMBERING: 1-BASED IN, 0-BASED DOWN ────────────────────────────────
+ *
+ * The domain is 1-based. `ClaimSource.page` is what a reviewer reads off the
+ * paper and what the detail pane prints ("Claim on page 2 of 2"), so this
+ * component's `page` prop and its `onVisiblePageChange` report are 1-based too
+ * — the app never has to think in indexes.
+ *
+ * The SDK is 0-based. `ViewState.currentPageIndex` is documented as
+ * "zero-based … maximum value of totalPageCount - 1", and the same holds for
+ * the `viewState.currentPageIndex.change` event payload. The conversion
+ * happens in exactly two functions below — `toPageIndex` on the way in,
+ * `toPageNumber` on the way out — and nowhere else, so an off-by-one has one
+ * place to live and one place to be fixed.
+ *
+ * ── JUMPING DOES NOT RELOAD ─────────────────────────────────────────────────
+ *
+ * The SDK gives us both halves of this, and they are different mechanisms:
+ *
+ *   · `initialViewState` on the LOAD configuration — a `ViewState` built with
+ *     `currentPageIndex`, applied before the viewer mounts. This is how the
+ *     document opens at the claim's page instead of at page 1. It is forgiving:
+ *     an index past the end of the document falls back to the default rather
+ *     than throwing.
+ *
+ *   · `instance.setViewState(state => state.set("currentPageIndex", n))` on the
+ *     MOUNTED instance — applied immediately and synchronously, no reload, no
+ *     WASM restart. This is how a later jump costs nothing. It is NOT forgiving:
+ *     an out-of-range index throws, which is why `navigate` clamps and catches.
+ *
+ * So a page change is a `setViewState` call, never a remount: the load effect
+ * below deliberately does NOT take `page` as a dependency (it reads the latest
+ * value off a ref), and a second, much cheaper effect does the navigating.
+ * Only `documentUrl` and the theme can force a reload.
  *
  * THE VIEWER HAS ITS OWN THEME. It renders into its own DOM subtree with its
  * own stylesheet, so the app's tokens do not reach it: left alone it would
@@ -28,27 +70,109 @@ import { useThemeStamp } from "./ThemeToggle";
  * we are asking a reviewer to trust. There is no page-invert or night-mode
  * option in the SDK's typings, and we would not want one here.
  *
- * Re-applying on toggle costs a reload: the theme is load configuration and
- * the SDK exposes no runtime setter (nothing like `setTheme` on the instance),
- * so the effect below takes the stamp as a dependency and unloads/reloads.
- * That resets the page position, which is why the theme is a rail-level
- * preference set once and not something touched mid-review.
+ * Re-applying the THEME still costs a reload: the theme is load configuration
+ * and the SDK exposes no runtime setter (nothing like `setTheme` on the
+ * instance), so the effect below takes the stamp as a dependency and
+ * unloads/reloads. What the reload now restores is the CLAIM's page, not the
+ * page the reviewer had scrolled to — `initialViewState` is rebuilt from the
+ * same `page` prop the pane opened with. The theme stays a rail-level
+ * preference set once rather than something touched mid-review.
  */
+
+/** The claim's page, as a human reads it. Page one is `1`. */
+const FIRST_PAGE = 1;
+
+/** What a parent can ask the mounted viewer to do. */
+export interface ViewerHandle {
+  /**
+   * Scroll the viewer to a 1-based page, now, without reloading.
+   *
+   * Needed as an imperative call and not just as a prop change: after the
+   * reviewer scrolls away by hand, the page they want to return to is the one
+   * `page` already holds, so a declarative prop has nothing to change and
+   * nothing to re-fire on. Silent no-op while no document is mounted — the
+   * caller is told about that through `onVisiblePageChange(null)` and is
+   * expected to disable its control rather than let a press do nothing.
+   */
+  jumpToPage: (page: number) => void;
+}
+
+export interface ViewerEmbedProps {
+  documentUrl?: string;
+  /**
+   * The 1-based page to open at, and to navigate to whenever it changes.
+   * Defaults to the first page.
+   */
+  page?: number;
+  /**
+   * The 1-based page currently on screen, reported on load and on every page
+   * change the reviewer makes. `null` means there is no document mounted —
+   * loading, failed, or unmounted — so the page position is genuinely unknown
+   * rather than zero.
+   */
+  onVisiblePageChange?: (page: number | null) => void;
+  ref?: Ref<ViewerHandle>;
+}
+
+/** 1-based page → 0-based SDK index, clamped into the document when known. */
+function toPageIndex(page: number, totalPages?: number): number {
+  const index = Math.max(Math.round(page) - FIRST_PAGE, 0);
+  if (totalPages === undefined || totalPages < 1) return index;
+  return Math.min(index, totalPages - 1);
+}
+
+/** 0-based SDK index → 1-based page. */
+function toPageNumber(pageIndex: number): number {
+  return pageIndex + FIRST_PAGE;
+}
+
 export default function ViewerEmbed({
   documentUrl = "/doc-a.pdf",
-}: {
-  documentUrl?: string;
-}) {
+  page = FIRST_PAGE,
+  onVisiblePageChange,
+  ref,
+}: ViewerEmbedProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sdkRef = useRef<typeof import("@nutrient-sdk/viewer").default | null>(
     null,
   );
+  /** The mounted instance — the thing `setViewState` can be called on. */
+  const instanceRef = useRef<Instance | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   /* The same `data-theme` stamp on <html> that theme.css resolves the app's
      tokens from — read, never stored a second time, so the document pane
      cannot end up in a different theme from the page around it. */
   const themeStamp = useThemeStamp();
+
+  /* Latest values, readable from the load effect WITHOUT being dependencies of
+     it. This is what keeps a page change from costing a WASM restart, and what
+     keeps the parent's inline callback from reloading the document on every
+     render of the parent. */
+  const pageRef = useRef(page);
+  const reportRef = useRef(onVisiblePageChange);
+  /* Declared before the load effect so it has already run when that effect
+     first fires in the same commit. */
+  useEffect(() => {
+    pageRef.current = page;
+    reportRef.current = onVisiblePageChange;
+  });
+
+  /**
+   * Navigate a mounted instance. Clamped because `setViewState` throws on an
+   * out-of-range index, and caught because a page the run recorded may simply
+   * not exist in the file we were handed — in which case the right outcome is
+   * that the viewer stays where it is, not that the pane crashes.
+   */
+  const navigate = useCallback((instance: Instance, target: number) => {
+    const index = toPageIndex(target, instance.totalPageCount);
+    if (instance.viewState.currentPageIndex === index) return;
+    try {
+      instance.setViewState((state) => state.set("currentPageIndex", index));
+    } catch {
+      // Out of bounds after all — leave the document where the reviewer left it.
+    }
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -57,6 +181,12 @@ export default function ViewerEmbed({
     let cancelled = false;
     setError(null);
     setReady(false);
+
+    /* Declared out here so the cleanup below can unregister the very same
+       function reference it registered. */
+    const handlePageIndexChange = (pageIndex: number) => {
+      reportRef.current?.(toPageNumber(pageIndex));
+    };
 
     (async () => {
       // Dynamic import keeps the ~3MB UMD bundle out of SSR and out of the
@@ -67,10 +197,18 @@ export default function ViewerEmbed({
       // Guard against React 18/19 StrictMode double-invoking effects: make
       // sure the container is clean before loading into it.
       NutrientViewer.unload(container);
-      await NutrientViewer.load({
+      const instance = await NutrientViewer.load({
         container,
         document: documentUrl,
         baseUrl: `${window.location.protocol}//${window.location.host}/`,
+        /* Open ON the claim's page rather than at page 1 and then scrolling.
+           `totalPageCount` is unknowable until the document is parsed, so this
+           index is only floored, not clamped — the SDK's documented fallback
+           for an index past the end is the default page, which is the same
+           thing we would do by hand. */
+        initialViewState: new NutrientViewer.ViewState({
+          currentPageIndex: toPageIndex(pageRef.current),
+        }),
         /* No stamp is "System", and the SDK's AUTO reads
            prefers-color-scheme itself — the same rule theme.css follows for
            an un-stamped root, so the OS moves both together. */
@@ -81,7 +219,21 @@ export default function ViewerEmbed({
               ? NutrientViewer.Theme.LIGHT
               : NutrientViewer.Theme.AUTO,
       });
-      if (!cancelled) setReady(true);
+      /* StrictMode (or a fast document switch) can unmount while `load` is in
+         flight: the cleanup below ran before there was an instance to unload,
+         so this branch is the one that has to dispose of it. */
+      if (cancelled) {
+        NutrientViewer.unload(instance);
+        return;
+      }
+      instanceRef.current = instance;
+      instance.addEventListener(
+        "viewState.currentPageIndex.change",
+        handlePageIndexChange,
+      );
+      setReady(true);
+      // Report where we actually landed, which is not always where we asked.
+      reportRef.current?.(toPageNumber(instance.viewState.currentPageIndex));
     })().catch((err: unknown) => {
       if (!cancelled) {
         setError(err instanceof Error ? err.message : String(err));
@@ -90,11 +242,43 @@ export default function ViewerEmbed({
 
     return () => {
       cancelled = true;
+      instanceRef.current?.removeEventListener(
+        "viewState.currentPageIndex.change",
+        handlePageIndexChange,
+      );
+      instanceRef.current = null;
+      /* There is no document on screen any more, so there is no page position.
+         Saying `null` is what lets the pane above disable its jump control
+         instead of offering a button with nothing behind it. */
+      reportRef.current?.(null);
       sdkRef.current?.unload(container);
     };
-    /* themeStamp is a dependency because `theme` is load configuration: the
-       only way to re-apply it is to unload and load again. */
+    /* `page` is deliberately NOT a dependency: navigating is a `setViewState`
+       call on the live instance (see the effect below), not a reload. The theme
+       IS one, because `theme` is load configuration and the SDK has no runtime
+       setter for it. */
   }, [documentUrl, themeStamp]);
+
+  /* The cheap half: a page change moves the mounted viewer. `ready` is a
+     dependency so a document that finishes loading after `page` last changed
+     still ends up on the right page. */
+  useEffect(() => {
+    const instance = instanceRef.current;
+    if (!instance) return;
+    navigate(instance, page);
+  }, [page, ready, navigate]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      jumpToPage: (target: number) => {
+        const instance = instanceRef.current;
+        if (!instance) return;
+        navigate(instance, target);
+      },
+    }),
+    [navigate],
+  );
 
   return (
     <div className="relative h-full min-h-[480px] w-full overflow-hidden rounded border border-line bg-surface">
