@@ -31,6 +31,7 @@
 import FunnelCounters from "./FunnelCounters";
 import PipelineRail from "./PipelineRail";
 import ReasoningStream from "./ReasoningStream";
+import { getComplianceCopy } from "@/lib/data";
 import type { PipelineEvent, PipelineStage } from "@/lib/data";
 
 /** States that mean a stage is over, whatever the outcome. */
@@ -55,6 +56,11 @@ export default function AnalysisRunPanel({
   onSkip,
 }: AnalysisRunPanelProps) {
   const settled = stages.filter((stage) => SETTLED.includes(stage.state));
+
+  // What the reader is entitled to expect of a run they are waiting on. Copy
+  // lives in lib/data with the rest of the compliance sentences — this file
+  // authors none of it.
+  const { analysisDuration } = getComplianceCopy();
 
   /**
    * The same stages, adapted to PipelineRail's own rule about counters: a
@@ -126,6 +132,10 @@ export default function AnalysisRunPanel({
               <p className="text-caption text-ink-3">
                 One line per decision the run reached. The five most recent are
                 on screen; the rest are in the audit trail.
+              </p>
+              {/* How long this should take, said before anyone has to wonder. */}
+              <p className="tabular text-caption text-ink-3">
+                {analysisDuration}
               </p>
             </section>
           </div>

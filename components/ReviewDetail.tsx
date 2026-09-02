@@ -34,6 +34,7 @@ import type {
   ClaimVerdict,
   DocumentMeta,
   Finding,
+  DecisionSignature,
   QueryTrace,
   RejectReason,
 } from "@/lib/data";
@@ -93,6 +94,13 @@ export interface ReviewDetailProps {
   trace?: QueryTrace;
   /** Who is signing — from the data layer, never a literal. */
   reviewer: string;
+  /**
+   * The pending-state signature line for THIS run, derived in lib/data. Passed
+   * through rather than defaulted inside DecisionBar, because DecisionBar's
+   * default resolves against the demo run and would name the demo's signer on
+   * every other run.
+   */
+  signature?: DecisionSignature;
   /** The signed decision for this finding, once one exists. */
   record?: AuditRecord;
   onApprove: (findingId: string) => void;
@@ -111,6 +119,7 @@ export default function ReviewDetail({
   documents,
   trace,
   reviewer,
+  signature,
   record,
   onApprove,
   onReject,
@@ -188,6 +197,7 @@ export default function ReviewDetail({
       <DecisionBar
         finding={finding}
         reviewer={reviewer}
+        signature={signature}
         record={record}
         onApprove={onApprove}
         onReject={onReject}

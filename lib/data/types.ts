@@ -329,6 +329,24 @@ export interface AuditRecord extends ReviewRecordT {
   reason?: RejectReason;
   /** Reviewer's own words. Set on reject, shown in the audit trail. */
   note?: string;
+  /**
+   * Which workspace actor signed this row.
+   *
+   * OPTIONAL on purpose. `ReviewRecord.reviewer` — a free string — is still
+   * the only identity the backend will persist, and a decision taken in the
+   * browser this session has no actor behind it at all (see
+   * TODO(schema-gap: session identity) in ReviewWorkspace). Resolve it with
+   * getRecordActor(), which falls back to matching `reviewer` by name and
+   * returns undefined when nobody matches: an unattributed row, never a
+   * guessed one. Part of TODO(schema-gap: ReviewRecord) below.
+   */
+  actorId?: ActorId;
+  /**
+   * Present ONLY on a countersignature row: this row ENDORSES another actor's
+   * decision instead of making one, so it resolves no finding and is excluded
+   * wherever findings-signed-off is counted. Absent on every decision row.
+   */
+  countersigns?: Countersignature;
 }
 
 /**
@@ -620,3 +638,269 @@ export interface UnscoredTrustBreakdown extends TrustScoreBreakdownBase {
 }
 
 export type TrustScoreBreakdown = ScoredTrustBreakdown | UnscoredTrustBreakdown;
+
+// ---------------------------------------------------------------------------
+// Actors — who did the work, and in what capacity
+//
+// TODO(schema-gap: ReviewRecord): the backend ReviewRecord (lib/types.ts)
+// carries exactly ONE identity field — `reviewer: string`, a free-form display
+// name. There is no actor or user entity anywhere in the domain model, no
+// role, no way to tell the person who ran the pipeline from the person who
+// signed off on its output, and no countersignature concept at all: a second
+// signature endorsing an existing decision cannot be expressed, so a
+// four-eyes approval is unrecordable today. EVERYTHING in this section is a
+// frontend-only view-model. When the backend grows an Actor (or User) entity
+// and ReviewRecord gains `actorId` plus a countersignature link, these types
+// must be REPLACED by re-exports, not reconciled.
+// ---------------------------------------------------------------------------
+
+/** Stable id for one person in the workspace. Fixture-only — see TODO above. */
+export type ActorId = "actor-bui" | "actor-shah" | "actor-ramanathan";
+
+/**
+ * What an actor is entitled to do. Rendered verbatim beside the name, so it is
+ * capitalized here exactly as it appears on screen.
+ *
+ * The three are distinct on purpose: a "Pipeline owner" executed the analysis
+ * run and signs nothing, a "Reviewer" signs decisions, and an "Approver"
+ * countersigns them. Collapsing them back into one free string is the gap
+ * above.
+ */
+export type ActorRole = "Reviewer" | "Pipeline owner" | "Approver";
+
+/** One person in the workspace. Fixture-only — see TODO above. */
+export interface Actor {
+  id: ActorId;
+  /** Two letters, e.g. "MB" — for a dense byline, never for identity. */
+  initials: string;
+  /** Display name exactly as it is signed, e.g. "M. Bui". */
+  name: string;
+  role: ActorRole;
+}
+
+/**
+ * The endorsement half of a countersignature row.
+ *
+ * A countersignature does NOT decide anything: the decision it endorses
+ * already resolved the finding. Every count of "findings signed off" therefore
+ * excludes these rows — otherwise one four-eyes approval would read as two
+ * closed findings. Fixture-only; see TODO(schema-gap: ReviewRecord) above.
+ */
+export interface Countersignature {
+  /** The actor whose decision this row endorses. */
+  decidedByActorId: ActorId;
+  /** ISO timestamp of the decision being endorsed. */
+  decidedAt: string;
+  /** Renderable clause, e.g. "Countersigned M. Bui's approval". */
+  label: string;
+}
+
+/**
+ * The audit ledger's own summary strip.
+ *
+ * Every number here is DERIVED from getAuditRecords() on the run — never a
+ * literal, so a fifth row changes the strip without anyone editing copy.
+ */
+export interface LedgerSummary {
+  /** Rows on the ledger, decisions and countersignatures alike. */
+  decisionCount: number;
+  /** How many of those rows endorse another actor's decision. */
+  countersignatureCount: number;
+  /** Distinct actors who put a signature on this ledger. */
+  reviewerCount: number;
+  /** Those actors, in order of first signature. */
+  signatories: readonly Actor[];
+  /** "4 decisions across 2 reviewers", or "No decisions signed" at zero. */
+  text: string;
+  /** Why a second signature exists at all — workspace policy, fixture copy. */
+  countersignaturePolicy: string;
+  /** Retention/immutability/export footer — fixture copy. */
+  retentionLine: string;
+}
+
+// ---------------------------------------------------------------------------
+// Scale signals — this run as part of something larger
+//
+// TODO(schema-gap: Workspace): there is no workspace or tenant entity in
+// lib/types.ts — the domain model starts at the claim and stops at the
+// ReviewRecord, so every shape below is a frontend-only view-model.
+//
+// The NUMBERS in them are not invented, though: each one is counted off the
+// fixture run registry — the reviews it holds, the findings in a run, the
+// documents behind them, the actors who signed its ledger, the timestamp its
+// query trace recorded. A figure this build cannot count is not shown at all.
+// ---------------------------------------------------------------------------
+
+/** One figure in the workspace strip above the reviews index. */
+export interface WorkspaceStat {
+  value: number;
+  /** Already formatted for display, e.g. "1,200". Render this, not `value`. */
+  display: string;
+  /** Noun phrase already agreeing in number with `value`. */
+  label: string;
+  /**
+   * TRUE would mean the number describes volume this build does not have. It
+   * is FALSE on every stat the strip carries today — each is counted off the
+   * fixture run registry — and the field stays so that a figure which ever
+   * stops being counted has to say so here rather than pass unremarked.
+   */
+  presentational: boolean;
+}
+
+/**
+ * The reviews-index strip: stats on the left, a freshness note on the right.
+ *
+ * `sync` is OPTIONAL because it is derived: it reports the instant a live
+ * source was actually reached (a query trace's `searchedAt`). A workspace whose
+ * runs never reached one has no freshness to report, and the strip renders no
+ * note rather than an invented one.
+ */
+export interface WorkspaceSummary {
+  /** Left-hand stats, in reading order. */
+  stats: readonly WorkspaceStat[];
+  /** Right-aligned freshness note, preceded by a 5px dot in `tone`. */
+  sync?: {
+    /** Absolute UTC — "Live sources last synced 31 Aug 2026, 04:47 UTC". */
+    text: string;
+    tone: "accent";
+    /** FALSE: the instant is a real logged timestamp, not scenery. */
+    presentational: boolean;
+  };
+}
+
+/**
+ * The line above the findings list.
+ *
+ * Every field is read straight off getCoverage() — they are counts of
+ * FINDINGS, per the CoverageBreakdown note, and there is nothing else on this
+ * line. A portfolio total once sat here; nothing in this build counts a
+ * portfolio, so nothing here claims one.
+ */
+export interface FindingsHeader {
+  openCount: number;
+  resolvedCount: number;
+  findingCount: number;
+  /** "9 open · 2 resolved · 11 findings". */
+  text: string;
+}
+
+/** The line below the findings list. */
+export interface FindingsFooter {
+  findingCount: number;
+  documentCount: number;
+  /** "Showing 11 findings from 2 documents" — both counts derived. */
+  text: string;
+}
+
+/** Where the selected finding sits in the queue. Derived from getFindings(). */
+export interface FindingPosition {
+  /** 1-based. */
+  index: number;
+  total: number;
+  /** "finding 2 of 11". */
+  text: string;
+}
+
+/**
+ * The decision bar's signature line, fully derived.
+ *
+ * `actor` is undefined when the run names nobody: before the first signed
+ * decision the app genuinely does not know who is at the keyboard, and `name`
+ * carries the say-so-copy instead of an invented name. See
+ * TODO(schema-gap: ReviewRecord) above — identity reaches the frontend only
+ * through a row that has already been signed.
+ */
+export interface DecisionSignature {
+  /** "Signing as". */
+  prefix: string;
+  actor?: Actor;
+  /** The name as rendered — the actor's, or the unidentified-signer copy. */
+  name: string;
+  role?: ActorRole;
+  position?: FindingPosition;
+  /** Segments in render order, already stripped of empties. */
+  segments: readonly string[];
+  /** "Signing as M. Bui · Reviewer · finding 2 of 11". */
+  text: string;
+}
+
+/**
+ * One weighted term of the trust blend.
+ *
+ * TODO(schema-gap: TrustScore): the backend stores the blend as PROSE
+ * (TrustScore.formula) and the blended result as a number, but never the
+ * weights — so the 40/60 split is written down in fixtures.ts
+ * (TRUST_BLEND_WEIGHTS) and nowhere in the contract. When TrustScore grows
+ * weights, read them off it.
+ */
+export interface TrustFormulaTerm {
+  componentId: TrustComponentId;
+  /** Blend weight, e.g. 0.4. */
+  weight: number;
+  /** The component's value, 0–1 — the SAME number its bar renders. */
+  value: number;
+}
+
+/**
+ * The formula strip beneath the dial: the sentence the backend already stores,
+ * plus the arithmetic that sentence describes.
+ *
+ * `arithmetic` is COMPUTED from `terms`, never hand-written, so it cannot
+ * disagree with the bars above it.
+ */
+export interface TrustFormula {
+  /** TrustScore.formula, verbatim. */
+  sentence: string;
+  /** In component order: extraction first, cross-document second. */
+  terms: readonly [TrustFormulaTerm, TrustFormulaTerm];
+  /** "0.4 × 0.88 + 0.6 × 0.62 = 0.724". */
+  arithmetic: string;
+  /** What the arithmetic evaluates to, 0–1. */
+  result: number;
+}
+
+/**
+ * One verification rule an admin sets and every reviewer inherits.
+ *
+ * TODO(schema-gap: VerificationRule): the backend has no rule entity — the
+ * thresholds live as constants inside the analysis routes, and the only trace
+ * of a rule anywhere in the contract is the free string QueryTrace.triggeredBy.
+ * Frontend-only view-model; `id` deliberately matches that string so a trace
+ * can be resolved back to the rule that routed it.
+ */
+export interface VerificationRule {
+  id: string;
+  /** Rule name as an admin set it. */
+  name: string;
+  /** One sentence: what the rule does to a claim. */
+  description: string;
+  /** Inactive rules stay listed and are not counted as active. */
+  active: boolean;
+}
+
+/** The policy line and rule list on the verification-rules screen. */
+export interface WorkspacePolicy {
+  /** "Workspace policy". */
+  label: string;
+  rules: readonly VerificationRule[];
+  /** Derived from `rules`, never a literal. */
+  activeRuleCount: number;
+  /** Who last edited the policy — a Pipeline owner, not a reviewer. */
+  lastModifiedBy: Actor;
+  /** Date as printed, e.g. "12 Aug". Presentational. */
+  lastModifiedAt: string;
+  /** "Workspace policy · 4 active rules · last modified by K. Shah, 12 Aug". */
+  text: string;
+}
+
+/**
+ * Compliance copy. Fixture-authored sentences, not derived from anything: they
+ * describe a retention and export policy this build does not implement, which
+ * is why they say what the SYSTEM does rather than what this run did.
+ */
+export interface ComplianceCopy {
+  /** Audit-trail footer. */
+  auditRetention: string;
+  /** Analyzing-screen expectation line. */
+  analysisDuration: string;
+}

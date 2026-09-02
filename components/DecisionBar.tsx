@@ -27,7 +27,13 @@
  */
 
 import { useState } from "react";
-import type { AuditRecord, Finding, RejectReason } from "@/lib/data";
+import { getDecisionSignature } from "@/lib/data";
+import type {
+  AuditRecord,
+  DecisionSignature,
+  Finding,
+  RejectReason,
+} from "@/lib/data";
 import { formatUtc } from "@/lib/format";
 
 /**
@@ -70,9 +76,16 @@ export interface DecisionBarProps {
   /** The finding under review. `finding.status` drives which state renders. */
   finding: Finding;
   /**
-   * Who is signing — `AuditRecord.reviewer` from the data layer, never a
-   * literal. In the pending state it is the "Signing as {name}" line; in the
-   * resolved state `record.reviewer` wins, because that is who actually signed.
+   * Who signed, for the RESOLVED strip — `AuditRecord.reviewer` from the data
+   * layer, never a literal, and `record.reviewer` wins over it when a record
+   * exists, because that is who actually put their name on this finding.
+   *
+   * The pending "Signing as" line no longer reads this: it comes off
+   * `signature` below, which resolves the signer from the ledger's last
+   * DECISION rather than its last row. ReviewWorkspace now stamps a decision
+   * taken in this session with `signature.name`, so the two agree — a bar that
+   * signs as one person and then confirms as another is one interaction
+   * contradicting itself.
    */
   reviewer: string;
   /**
@@ -86,6 +99,28 @@ export interface DecisionBarProps {
    * not know rather than inventing a time.
    */
   record?: AuditRecord;
+  /**
+   * The signature line for the pending state: who is signing, in what
+   * capacity, and where this finding sits in the queue —
+   * "Signing as M. Bui · Reviewer · finding 2 of 11".
+   *
+   * Every part is DERIVED in lib/data: the name and role off the run's ledger,
+   * the position off getFindings() in the order the queue renders it, so the
+   * line cannot drift from the queue beside it. It defaults to the demo run's;
+   * a caller on any other run must pass getDecisionSignature(finding.id,
+   * reviewId), because a signature is only true of the ledger it was read off.
+   *
+   * It is NOT the same answer as `reviewer` above. getSigningActor() skips
+   * countersignatures — the last row on the demo ledger is P. Ramanathan's
+   * endorsement, and the reviewer at the keyboard is M. Bui, who made the
+   * decision it endorses.
+   *
+   * TODO(schema-gap: session identity): none of this is a session. Identity
+   * reaches the frontend only through a row that has already been signed, so
+   * the signer is inferred from the ledger and the line says "an unidentified
+   * reviewer" when a run has signed nothing at all.
+   */
+  signature?: DecisionSignature;
   /** Pre-selected rejection reason. Defaults to "Not a conflict". */
   defaultRejectReason?: RejectReason;
   onApprove?: (findingId: string) => void;
@@ -105,6 +140,7 @@ export default function DecisionBar({
   finding,
   reviewer,
   record,
+  signature = getDecisionSignature(finding.id),
   defaultRejectReason = DEFAULT_REJECT_REASON,
   onApprove,
   onReject,
@@ -159,8 +195,27 @@ export default function DecisionBar({
         ) : null}
 
         <div className="flex items-center justify-between gap-4 px-5 py-3">
+          {/*
+           * "Signing as M. Bui · Reviewer · finding 2 of 11 · Nutrient DWS".
+           * Built from the signature's PARTS rather than its joined `text` so
+           * the name can carry the emphasis and the rest stays metadata — the
+           * segments and their order are still the data layer's. A run that
+           * names nobody has no role and no actor, and the name is then the
+           * say-so copy; a finding outside this run's queue has no position,
+           * and the segment is left off rather than reported as zero.
+           */}
           <p className="text-body text-ink-2">
-            Signing as <span className="font-medium text-ink">{reviewer}</span>
+            {signature.prefix}{" "}
+            <span className="font-medium text-ink">{signature.name}</span>
+            {signature.role ? (
+              <span className="text-ink-3"> · {signature.role}</span>
+            ) : null}
+            {signature.position ? (
+              <span className="tabular text-ink-3">
+                {" "}
+                · {signature.position.text}
+              </span>
+            ) : null}
             <span className="text-ink-3"> · {SIGNING_PROVIDER}</span>
           </p>
 

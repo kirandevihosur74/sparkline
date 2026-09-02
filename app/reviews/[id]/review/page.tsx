@@ -65,10 +65,11 @@ export default async function ReviewScreen({
       documents={getDocuments(reviewId)}
       traces={traces}
       records={records}
-      // Who is signing: the ledger is the only place a reviewer's name exists
-      // (TODO(schema-gap: session identity) in ReviewWorkspace). The most
-      // recent signature is the best answer the data layer can give.
-      reviewer={records[records.length - 1]?.reviewer}
+      // Which run is on screen. The signature line is resolved from THIS run's
+      // ledger inside the workspace — passing the last ledger ROW's reviewer
+      // named the countersigning approver, so the bar signed as one person and
+      // confirmed as another.
+      reviewId={reviewId}
     />
   );
 }

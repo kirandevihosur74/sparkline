@@ -38,8 +38,24 @@ import type {
   TrustScoreComponent,
   TrustContextFact,
   TrustDistortionNote,
+  TrustComponentId,
+  Actor,
+  ActorId,
+  LedgerSummary,
+  WorkspaceStat,
+  WorkspaceSummary,
+  FindingsHeader,
+  FindingsFooter,
+  FindingPosition,
+  DecisionSignature,
+  TrustFormula,
+  TrustFormulaTerm,
+  VerificationRule,
+  WorkspacePolicy,
+  ComplianceCopy,
 } from "./types";
 import { normalizeConfidence } from "./types";
+import { formatUtc } from "../format";
 
 // ---------------------------------------------------------------------------
 // Review
@@ -544,15 +560,80 @@ const trustScore: TrustScore = {
 };
 
 // ---------------------------------------------------------------------------
-// Audit ledger — 2 signed review decisions.
+// Workspace actors — WHO did the work, and in what capacity.
+//
+// TODO(schema-gap: ReviewRecord): the backend records identity as ONE free
+// string, `ReviewRecord.reviewer`. There is no actor entity, no role, and no
+// countersignature link, so nothing below survives a round trip through the
+// contract today. See the full statement on Actor in lib/data/types.ts.
+//
+// Three people, three capacities, deliberately not interchangeable: K. Shah
+// executed the analysis run and signs nothing; M. Bui reviews and signs;
+// P. Ramanathan countersigns what M. Bui signs. Attributing every record to
+// "M. Bui" — which is what a single free string forces — is what made this
+// read like one person's notebook.
+// ---------------------------------------------------------------------------
+
+const actors = {
+  bui: {
+    id: "actor-bui",
+    initials: "MB",
+    name: "M. Bui",
+    role: "Reviewer",
+  },
+  shah: {
+    id: "actor-shah",
+    initials: "KS",
+    name: "K. Shah",
+    role: "Pipeline owner",
+  },
+  ramanathan: {
+    id: "actor-ramanathan",
+    initials: "PR",
+    name: "P. Ramanathan",
+    role: "Approver",
+  },
+} satisfies Record<string, Actor>;
+
+/** Roster order: reviewer, pipeline owner, approver. */
+const actorList: readonly Actor[] = [actors.bui, actors.shah, actors.ramanathan];
+
+const actorsById: Record<ActorId, Actor> = {
+  "actor-bui": actors.bui,
+  "actor-shah": actors.shah,
+  "actor-ramanathan": actors.ramanathan,
+};
+
+/**
+ * Why a second signature exists at all. Workspace policy, not a per-run fact —
+ * the same sentence explains every countersignature row on every ledger.
+ */
+const COUNTERSIGNATURE_POLICY =
+  "Decisions on high and critical findings carry a second signature from an approver.";
+
+// ---------------------------------------------------------------------------
+// Audit ledger — 2 signed decisions, each countersigned: 4 rows across
+// 2 signing actors. A countersignature row shares its decision's flagId and
+// carries `countersigns`, so it never reads as a second closed finding — the
+// decision row it endorses comes first, and every "signed off" count filters
+// countersignature rows out (see buildTrustBreakdown).
+//
+// The counterparty-standing flag is deliberately NOT on this ledger: it is the
+// CRITICAL finding still open, the one the trust context line reports as
+// "1 finding still waiting on a reviewer", and the one a reviewer signs on
+// screen.
+//
 // TODO(schema-gap: ReviewRecord): contentHash is a fixture-only placeholder
-// ("fixture-sha256:" prefix) — the backend ReviewRecord carries no hash.
+// ("fixture-sha256:" prefix) — the backend ReviewRecord carries no hash. The
+// same gap covers `actorId` and `countersigns`: the contract has one free
+// `reviewer` string and no way to say that one signature endorses another.
 // ---------------------------------------------------------------------------
 
 const auditRecords: AuditRecord[] = [
   {
     flagId: CONTRADICTION_FLAG_ID,
-    reviewer: "M. Bui",
+    reviewer: actors.bui.name,
+    actorId: actors.bui.id,
     decision: "approved",
     signedAt: "2026-08-31T05:12:47.000Z",
     signedDocumentUrl: "/records/demo-2026-08/flag-contradiction-epc-cost.pdf",
@@ -562,8 +643,28 @@ const auditRecords: AuditRecord[] = [
     evidenceSummary: "Cross-document: doc-a p.1 vs doc-b p.2 · Δ $25M · 13.4%",
   },
   {
+    flagId: CONTRADICTION_FLAG_ID,
+    reviewer: actors.ramanathan.name,
+    actorId: actors.ramanathan.id,
+    decision: "approved",
+    signedAt: "2026-08-31T05:18:03.000Z",
+    signedDocumentUrl:
+      "/records/demo-2026-08/flag-contradiction-epc-cost-countersigned.pdf",
+    contentHash: "fixture-sha256:7e30ab5419cf62d1",
+    claimField: "expansion_install_cost",
+    claimValue: "$186M vs $211M",
+    evidenceSummary:
+      "Countersignature: IE bottom-up estimate accepted as the diligence figure",
+    countersigns: {
+      decidedByActorId: actors.bui.id,
+      decidedAt: "2026-08-31T05:12:47.000Z",
+      label: "Countersigned M. Bui's approval",
+    },
+  },
+  {
     flagId: "finding-warranty",
-    reviewer: "M. Bui",
+    reviewer: actors.bui.name,
+    actorId: actors.bui.id,
     decision: "rejected",
     signedAt: "2026-08-31T05:14:12.000Z",
     signedDocumentUrl: "/records/demo-2026-08/finding-warranty.pdf",
@@ -574,6 +675,25 @@ const auditRecords: AuditRecord[] = [
       "Human review: warranty mitigant not accepted while counterparty is in Chapter 11",
     reason: "not_a_conflict",
     note: "The 25-year workmanship warranty is quoted accurately from the agreement \u2014 nothing in the documents contradicts it, so there is no finding to carry here. The real exposure is the installer's Chapter 11, which is already tracked on the counterparty standing flag; opening a second item against the same event would double-count it.",
+  },
+  {
+    flagId: "finding-warranty",
+    reviewer: actors.ramanathan.name,
+    actorId: actors.ramanathan.id,
+    decision: "rejected",
+    signedAt: "2026-08-31T05:18:41.000Z",
+    signedDocumentUrl:
+      "/records/demo-2026-08/finding-warranty-countersigned.pdf",
+    contentHash: "fixture-sha256:19d7c4a8f0b35e26",
+    claimField: "workmanship_warranty",
+    claimValue: "25-year installer-backed workmanship warranty",
+    evidenceSummary:
+      "Countersignature: exposure stays on the counterparty standing flag, not duplicated here",
+    countersigns: {
+      decidedByActorId: actors.bui.id,
+      decidedAt: "2026-08-31T05:14:12.000Z",
+      label: "Countersigned M. Bui's rejection",
+    },
   },
 ];
 
@@ -1236,9 +1356,19 @@ function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
     value: normalizeConfidence(score.extraction),
     caption:
       "Mean Nutrient DWS field confidence across every claim pulled out of the bundle.",
+    // TrustComponentCount.unit is contractually "already agreeing with
+    // `value`" — so the noun is chosen from the count, never fixed plural.
+    // "1 disagreements found" is the bug this closes.
     counts: [
-      { value: run.review.claimCount, unit: "claims extracted" },
-      { value: run.review.documents.length, unit: "documents read" },
+      {
+        value: run.review.claimCount,
+        unit: run.review.claimCount === 1 ? "claim extracted" : "claims extracted",
+      },
+      {
+        value: run.review.documents.length,
+        unit:
+          run.review.documents.length === 1 ? "document read" : "documents read",
+      },
     ],
     origin: "backend",
   };
@@ -1257,8 +1387,14 @@ function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
     caption:
       "How far the documents agree on the claims the comparison stage could pair up, weighted down by each unresolved disagreement.",
     counts: [
-      { value: crossChecked.length, unit: "agreement checks" },
-      { value: disagreements, unit: "disagreements found" },
+      {
+        value: crossChecked.length,
+        unit: crossChecked.length === 1 ? "agreement check" : "agreement checks",
+      },
+      {
+        value: disagreements,
+        unit: disagreements === 1 ? "disagreement found" : "disagreements found",
+      },
     ],
     origin: "backend",
   };
@@ -1305,14 +1441,24 @@ function buildTrustBreakdown(run: FixtureRun): TrustScoreBreakdown {
       f.verdict === "stale" ||
       f.verdict === "review_required",
   );
-  const signed = run.auditRecords.filter((record) =>
-    needsSignoff.some((f) => f.id === record.flagId),
+  // FINDINGS signed off, not ledger rows: countersignature rows share their
+  // decision's flagId, so counting rows would report one four-eyes approval as
+  // two closed findings. Filter the endorsements out and count distinct ids.
+  const signedFindingIds = new Set(
+    run.auditRecords
+      .filter(
+        (record) =>
+          record.countersigns === undefined &&
+          needsSignoff.some((f) => f.id === record.flagId),
+      )
+      .map((record) => record.flagId),
   );
-  const stillOpen = needsSignoff.length - signed.length;
+  const signedCount = signedFindingIds.size;
+  const stillOpen = needsSignoff.length - signedCount;
   const humanSignoff: TrustContextFact<"human_signoff"> = {
     id: "human_signoff",
-    value: signed.length,
-    label: signed.length === 1 ? "finding signed off" : "findings signed off",
+    value: signedCount,
+    label: signedCount === 1 ? "finding signed off" : "findings signed off",
     outstanding:
       stillOpen <= 0
         ? undefined
@@ -1372,4 +1518,562 @@ export function getTrustBreakdown(
 ): TrustScoreBreakdown | undefined {
   const run = resolveRun(reviewId);
   return run ? buildTrustBreakdown(run) : undefined;
+}
+
+// ===========================================================================
+// PRESENTATIONAL VALUES — BACKED BY NO RECORDS
+//
+// READ THIS BEFORE ADDING ANYTHING BELOW.
+//
+// One value is left in this block, and it is not a count of anything: the date
+// workspace policy was last edited. No policy in this build is editable, so
+// nothing records when it changed.
+//
+// Everything else the UI shows is COUNTED — off the run registry, a run's
+// findings, its documents, its ledger rows, or a timestamp a query trace
+// logged. That is the rule this block exists to police: if a value is written
+// here it was typed in and must carry `presentational: true` wherever a
+// view-model exposes it; if it is not here, an accessor derived it and its doc
+// comment says from what. There is no third category.
+//
+// The scale figures that used to sit here — an active-review count, a
+// quarter-to-date claim volume, a portfolio claim total, a findings page count
+// and a "synced N minutes ago" note — are gone, not relocated. A number that
+// cannot survive being asked where it came from is exactly what this product
+// flags in other people's documents.
+//
+// TODO(schema-gap: VerificationRule): closing this one means a rule entity
+// that records its own edits. Until then this date is scenery, and it must
+// never be summed, filtered or compared against anything derived.
+// ===========================================================================
+
+const PRESENTATIONAL_SCALE = {
+  /** When workspace policy was last edited. No policy is editable here. */
+  policyLastModifiedAt: "12 Aug",
+} as const;
+
+// ---------------------------------------------------------------------------
+// Formatting helpers — private, and locale-free ON PURPOSE.
+//
+// Intl formatting varies with the runtime's locale data, which means the
+// server and the browser can render the same number two different ways and
+// React reports a hydration mismatch. These produce one string everywhere.
+// ---------------------------------------------------------------------------
+
+/** 1200 → "1,200". Every figure it groups today is a counted one. */
+function groupThousands(value: number): string {
+  const [whole, ...rest] = String(value).split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return [grouped, ...rest].join(".");
+}
+
+/** Fixed decimals with trailing zeros trimmed: (0.4, 1) → "0.4". */
+function trimmedDecimal(value: number, places: number): string {
+  return String(Number(value.toFixed(places)));
+}
+
+/** Joins the segments of a metadata line with the one separator this UI uses. */
+const SEGMENT_SEPARATOR = " · ";
+
+function joinSegments(segments: readonly string[]): string {
+  return segments.filter(Boolean).join(SEGMENT_SEPARATOR);
+}
+
+/** "1 finding" / "11 findings" — the count and its noun, already agreeing. */
+function plural(count: number, singular: string, pluralForm: string): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+// ---------------------------------------------------------------------------
+// Actor accessors
+// ---------------------------------------------------------------------------
+
+/** The workspace roster: reviewer, pipeline owner, approver. */
+export function getActors(): readonly Actor[] {
+  return actorList;
+}
+
+/** One actor by id. Ids are a closed union, so this always resolves. */
+export function getActor(id: ActorId): Actor {
+  return actorsById[id];
+}
+
+/**
+ * The actor behind a ledger row.
+ *
+ * Prefers the typed `actorId`; falls back to matching the free `reviewer`
+ * string by name, which is all the backend will ever send. Returns undefined
+ * when neither resolves — an unattributed row is rendered as unattributed, not
+ * as a guess. See TODO(schema-gap: ReviewRecord) in lib/data/types.ts.
+ */
+export function getRecordActor(record: AuditRecord): Actor | undefined {
+  if (record.actorId) return actorsById[record.actorId];
+  return actorList.find((actor) => actor.name === record.reviewer);
+}
+
+/** Who ran the analysis. Named next to pipeline output, never next to a signature. */
+export function getPipelineOwner(): Actor {
+  return actors.shah;
+}
+
+/**
+ * Who is signing on this run: the most recent actor to make a DECISION (not to
+ * countersign one).
+ *
+ * Undefined when the run has no signed decision at all — the degraded run's
+ * case. Before the first decision the app does not know who is at the
+ * keyboard, and getDecisionSignature() says so rather than inventing a name.
+ */
+export function getSigningActor(
+  reviewId: string = DEMO_REVIEW_ID,
+): Actor | undefined {
+  const decisions = (resolveRun(reviewId)?.auditRecords ?? []).filter(
+    (record) => record.countersigns === undefined,
+  );
+  const last = decisions[decisions.length - 1];
+  return last ? getRecordActor(last) : undefined;
+}
+
+/**
+ * Signature line for the decision bar: who is signing, in what capacity, and
+ * where the finding sits in the queue.
+ *
+ * "Signing as M. Bui · Reviewer · finding 2 of 11". Every part is derived —
+ * the name and role off the run's ledger, the position off getFindings() — so
+ * the line cannot drift from the queue it describes. Pass the selected
+ * finding's id; omit it and the position segment is left off.
+ */
+export function getDecisionSignature(
+  findingId?: string,
+  reviewId: string = DEMO_REVIEW_ID,
+): DecisionSignature {
+  const actor = getSigningActor(reviewId);
+  const name = actor?.name ?? UNIDENTIFIED_SIGNER;
+  const position = findingId
+    ? getFindingPosition(findingId, reviewId)
+    : undefined;
+  const segments = [
+    `${SIGNING_PREFIX} ${name}`,
+    ...(actor ? [actor.role] : []),
+    ...(position ? [position.text] : []),
+  ];
+  return {
+    prefix: SIGNING_PREFIX,
+    actor,
+    name,
+    role: actor?.role,
+    position,
+    segments,
+    text: joinSegments(segments),
+  };
+}
+
+/** The decision bar's fixed lead-in. Copy, so no component types it. */
+const SIGNING_PREFIX = "Signing as";
+
+/**
+ * What the signature line says when the run names nobody.
+ *
+ * TODO(schema-gap: session identity): there is no current-user or session
+ * shape in lib/types.ts — identity reaches the frontend only on a row that has
+ * already been signed. The app says so instead of inventing a name.
+ */
+const UNIDENTIFIED_SIGNER = "an unidentified reviewer";
+
+// ---------------------------------------------------------------------------
+// Audit ledger summary
+// ---------------------------------------------------------------------------
+
+/**
+ * The ledger's summary strip and compliance footer.
+ *
+ * `decisionCount`, `countersignatureCount`, `reviewerCount` and `signatories`
+ * are ALL derived from getAuditRecords() — a fifth row changes the strip with
+ * no copy edit. The demo run reads "4 decisions across 2 reviewers"; the
+ * degraded run signed nothing, so it reads "No decisions signed" and its
+ * counts are zero.
+ */
+export function getLedgerSummary(
+  reviewId: string = DEMO_REVIEW_ID,
+): LedgerSummary {
+  const records = getAuditRecords(reviewId);
+  const signatories: Actor[] = [];
+  for (const record of records) {
+    const actor = getRecordActor(record);
+    if (actor && !signatories.some((known) => known.id === actor.id)) {
+      signatories.push(actor);
+    }
+  }
+  const countersignatureCount = records.filter(
+    (record) => record.countersigns !== undefined,
+  ).length;
+
+  return {
+    decisionCount: records.length,
+    countersignatureCount,
+    reviewerCount: signatories.length,
+    signatories,
+    text:
+      records.length === 0
+        ? "No decisions signed"
+        : `${plural(records.length, "decision", "decisions")} across ${plural(
+            signatories.length,
+            "reviewer",
+            "reviewers",
+          )}`,
+    countersignaturePolicy: COUNTERSIGNATURE_POLICY,
+    retentionLine: complianceCopy.auditRetention,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Scale signals
+// ---------------------------------------------------------------------------
+
+/**
+ * Every review the workspace holds, in registry order.
+ *
+ * This IS the workspace: there is no workspace entity, so the set of runs the
+ * registry can serve is the only defensible answer to "how many reviews are
+ * there". Two today; a third fixture run makes the strip read three with no
+ * copy edit and nobody typing a number.
+ */
+function listReviews(): ReviewSummary[] {
+  return Object.values(runs).map((run) => run.review);
+}
+
+/**
+ * Distinct actors who have signed a decision anywhere in the workspace.
+ *
+ * Same basis as the audit ledger's reviewer count — getLedgerSummary()'s own
+ * signatories, merged across runs by actor id — so the reviews index and the
+ * ledger cannot report different numbers of reviewers.
+ */
+function workspaceSignatories(): Actor[] {
+  const signatories: Actor[] = [];
+  for (const reviewId of Object.keys(runs)) {
+    for (const actor of getLedgerSummary(reviewId).signatories) {
+      if (!signatories.some((known) => known.id === actor.id)) {
+        signatories.push(actor);
+      }
+    }
+  }
+  return signatories;
+}
+
+/**
+ * The most recent instant this workspace actually reached a live source: the
+ * latest `searchedAt` across every run's query traces.
+ *
+ * Undefined when no run ever completed a query — the degraded run holds no
+ * traces, and a workspace of nothing but degraded runs has no freshness to
+ * report. The caller renders no note rather than inventing one.
+ */
+function lastLiveCheckAt(): string | undefined {
+  let latest: string | undefined;
+  for (const run of Object.values(runs)) {
+    for (const trace of run.queryTraces) {
+      if (latest === undefined || Date.parse(trace.searchedAt) > Date.parse(latest)) {
+        latest = trace.searchedAt;
+      }
+    }
+  }
+  return latest;
+}
+
+/**
+ * The strip above the reviews index.
+ *
+ * NOTHING here is presentational. The review count is the number of reviews in
+ * the run registry; the reviewer count is the distinct actors who have signed a
+ * ledger row, the same basis the audit ledger's own "2 reviewers" uses; and the
+ * freshness note is the real logged `searchedAt` of the latest query trace,
+ * rendered as an ABSOLUTE UTC instant through formatUtc.
+ *
+ * Absolute, not "4 minutes ago", for two reasons: the fixtures are fixed in
+ * time, so any elapsed figure would be false, and a relative time computed at
+ * render differs between the server pass and the client pass — the hydration
+ * bug class lib/format.ts exists to prevent.
+ */
+export function getWorkspaceSummary(): WorkspaceSummary {
+  const reviewCount = listReviews().length;
+  const signedBy = workspaceSignatories().length;
+  const stats: WorkspaceStat[] = [
+    {
+      value: reviewCount,
+      display: groupThousands(reviewCount),
+      label: reviewCount === 1 ? "active review" : "active reviews",
+      presentational: false,
+    },
+    {
+      value: signedBy,
+      display: groupThousands(signedBy),
+      label: signedBy === 1 ? "reviewer" : "reviewers",
+      presentational: false,
+    },
+  ];
+
+  const syncedAt = lastLiveCheckAt();
+  const syncedLabel = syncedAt ? formatUtc(syncedAt) : undefined;
+
+  return {
+    stats,
+    sync: syncedLabel
+      ? {
+          text: `Live sources last synced ${syncedLabel}`,
+          tone: "accent",
+          presentational: false,
+        }
+      : undefined,
+  };
+}
+
+/**
+ * The line above the findings list.
+ *
+ * "9 open · 2 resolved · 11 findings" — all three read off getCoverage() on
+ * every call, and they are counts of FINDINGS (see CoverageBreakdown), which
+ * is why the noun says so. Nothing on this line is typed in.
+ */
+export function getFindingsHeader(
+  reviewId: string = DEMO_REVIEW_ID,
+): FindingsHeader {
+  const coverage = getCoverage(reviewId);
+  const resolvedCount = coverage.approved + coverage.rejected;
+
+  return {
+    openCount: coverage.open,
+    resolvedCount,
+    findingCount: coverage.total,
+    text: joinSegments([
+      `${coverage.open} open`,
+      `${resolvedCount} resolved`,
+      plural(coverage.total, "finding", "findings"),
+    ]),
+  };
+}
+
+/**
+ * The line below the findings list.
+ *
+ * "Showing 11 findings from 2 documents" — both counts derived, from
+ * getCoverage() and the run's documents. There is no pager: this build has one
+ * page of findings, and a "page 1 of 12" that counted nothing was a claim the
+ * app could not have checked in a document of its own.
+ */
+export function getFindingsFooter(
+  reviewId: string = DEMO_REVIEW_ID,
+): FindingsFooter {
+  const findingCount = getCoverage(reviewId).total;
+  const documentCount = getDocuments(reviewId).length;
+
+  return {
+    findingCount,
+    documentCount,
+    text: `Showing ${plural(
+      findingCount,
+      "finding",
+      "findings",
+    )} from ${plural(documentCount, "document", "documents")}`,
+  };
+}
+
+/**
+ * Where one finding sits in the queue — "finding 2 of 11".
+ *
+ * Both numbers are derived from getFindings() in the order the queue renders
+ * it. Undefined for an id that is not in this run's queue: an unknown finding
+ * has no position, and reporting "finding 0 of 11" would be a lie.
+ */
+export function getFindingPosition(
+  findingId: string,
+  reviewId: string = DEMO_REVIEW_ID,
+): FindingPosition | undefined {
+  const queue = getFindings(reviewId);
+  const index = queue.findIndex((finding) => finding.id === findingId);
+  if (index < 0) return undefined;
+  return {
+    index: index + 1,
+    total: queue.length,
+    text: `finding ${index + 1} of ${queue.length}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Trust formula
+// ---------------------------------------------------------------------------
+
+/**
+ * The blend weights the fixture comment above `trustScore` already names —
+ * 40% extraction, 60% cross-reference.
+ *
+ * TODO(schema-gap: TrustScore): the backend stores the blend as PROSE
+ * (TrustScore.formula) and its result as a number, but never the weights, so
+ * they are written down here and nowhere in the contract. When TrustScore
+ * grows them, read them off it and delete this.
+ */
+const TRUST_BLEND_WEIGHTS: Record<TrustComponentId, number> = {
+  extraction_quality: 0.4,
+  cross_document_agreement: 0.6,
+};
+
+/**
+ * The formula strip beneath the dial: a sentence describing the blend, plus
+ * the arithmetic that produces the dial's number, rendered from the REAL
+ * component values.
+ *
+ * The sentence is NOT TrustScore.formula. That field records the backend's own
+ * algorithm — "start at 100, subtract materiality-weighted penalties, then
+ * scale by average extraction confidence" — which is a DIFFERENT computation
+ * from the 40/60 blend these fixtures carry: lib/score.ts blendTrustScore
+ * computes `crossReference × avgConfidence`, i.e. 0.62 × 0.88 = 0.55, not the
+ * 0.72 this run records. Printing that sentence above this arithmetic would
+ * put two different computations on one strip and invite exactly the question
+ * the strip exists to answer. So the strip describes the arithmetic it shows.
+ *
+ * TODO(schema-gap: TrustScore): the fixture blend and lib/score.ts disagree
+ * about how a trust score is computed. Whoever reconciles them owns both
+ * TRUST_BLEND_WEIGHTS here and blendTrustScore there; until then the strip
+ * explains the number actually on screen and says nothing about the backend.
+ *
+ * "0.4 × 0.88 + 0.6 × 0.62 = 0.724". Both operands are the same numbers the
+ * two bars render (TrustScoreBreakdown.components[n].value), and the string is
+ * computed from them on every call — so the strip can never disagree with the
+ * bars above it, and editing a component value updates the arithmetic for free.
+ *
+ * Undefined for a run that recorded NO blend: there is no dial, so there is no
+ * arithmetic to explain, and inventing one would be exactly the invented number
+ * the unscored path exists to avoid.
+ */
+export function getTrustFormula(
+  reviewId: string = DEMO_REVIEW_ID,
+): TrustFormula | undefined {
+  const run = resolveRun(reviewId);
+  if (!run) return undefined;
+
+  const score = run.review.trustScore;
+  if (score.blended === undefined) return undefined;
+
+  const [extraction, crossDocument] = buildTrustBreakdown(run).components;
+  const terms: readonly [TrustFormulaTerm, TrustFormulaTerm] = [
+    {
+      componentId: extraction.id,
+      weight: TRUST_BLEND_WEIGHTS[extraction.id],
+      value: extraction.value,
+    },
+    {
+      componentId: crossDocument.id,
+      weight: TRUST_BLEND_WEIGHTS[crossDocument.id],
+      value: crossDocument.value,
+    },
+  ];
+
+  const result = terms.reduce((sum, term) => sum + term.weight * term.value, 0);
+  const arithmetic = `${terms
+    .map((term) => `${trimmedDecimal(term.weight, 1)} × ${term.value.toFixed(2)}`)
+    .join(" + ")} = ${result.toFixed(3)}`;
+
+  // Describes THIS arithmetic — see the schema-gap note above for why
+  // TrustScore.formula (the backend's own, different algorithm) is not used.
+  const sentence =
+    "Weighted blend of extraction quality (40%) and cross-document agreement (60%).";
+
+  return { sentence, terms, arithmetic, result };
+}
+
+// ---------------------------------------------------------------------------
+// Workspace policy — the verification rules an admin sets and reviewers inherit
+//
+// TODO(schema-gap: VerificationRule): the backend has no rule entity. These
+// thresholds live as constants inside the analysis routes, and the only trace
+// of a rule anywhere in the contract is QueryTrace.triggeredBy, a free string.
+// Rule ids below match that string on purpose, so a trace resolves back to the
+// rule that routed it.
+// ---------------------------------------------------------------------------
+
+const verificationRules: readonly VerificationRule[] = [
+  {
+    id: "low-confidence-holdback",
+    name: "Low-confidence hold-back",
+    description:
+      "A claim extracted below 0.70 field confidence is held back from comparison and shown with the reason on its row, rather than compared as if it were certain.",
+    active: true,
+  },
+  {
+    id: "cross-document-conflict",
+    name: "Cross-document conflict threshold",
+    description:
+      "Two documents that state the same field open a contradiction when their values differ by more than 5%; anything closer is recorded as consistent.",
+    active: true,
+  },
+  {
+    id: "counterparty-standing-external-check",
+    name: "Counterparty standing external check",
+    description:
+      "A claim about a counterparty's standing, scale or solvency cannot be settled between the documents, so it is routed to a live source and the full search is kept for the audit trail.",
+    active: true,
+  },
+  {
+    id: "human-review-escalation",
+    name: "Human review escalation",
+    description:
+      "A high or critical finding whose evidence is a judgement rather than a figure is routed to a reviewer and cannot be closed by the pipeline.",
+    active: true,
+  },
+];
+
+/** The four rules, in the order the policy screen lists them. */
+export function getVerificationRules(): readonly VerificationRule[] {
+  return verificationRules;
+}
+
+/**
+ * The policy line above the rules list:
+ * "Workspace policy · 4 active rules · last modified by K. Shah, 12 Aug".
+ *
+ * The 4 is derived from the rules themselves. The editor is the workspace's
+ * pipeline owner — an admin sets policy, reviewers inherit it — and the date is
+ * presentational (PRESENTATIONAL_SCALE.policyLastModifiedAt): nothing here is
+ * editable, so nothing records when it changed.
+ */
+export function getWorkspacePolicy(): WorkspacePolicy {
+  const rules = getVerificationRules();
+  const activeRuleCount = rules.filter((rule) => rule.active).length;
+  const lastModifiedBy = getPipelineOwner();
+  const lastModifiedAt = PRESENTATIONAL_SCALE.policyLastModifiedAt;
+  const label = "Workspace policy";
+
+  return {
+    label,
+    rules,
+    activeRuleCount,
+    lastModifiedBy,
+    lastModifiedAt,
+    text: joinSegments([
+      label,
+      `${plural(activeRuleCount, "active rule", "active rules")}`,
+      `last modified by ${lastModifiedBy.name}, ${lastModifiedAt}`,
+    ]),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Compliance copy
+//
+// Fixture-authored sentences, derived from nothing. They describe a retention,
+// immutability and export policy this build does not implement, which is why
+// they state what the SYSTEM does rather than what this run did — no number in
+// either line is a count of anything on screen.
+// ---------------------------------------------------------------------------
+
+const complianceCopy: ComplianceCopy = {
+  auditRetention:
+    "Records retained 7 years · immutable once signed · exportable as PDF or JSON",
+  analysisDuration:
+    "Typical analysis completes in under 30 seconds. Documents over 100 pages may take longer.",
+};
+
+/** The two compliance lines: the audit footer and the analyzing-screen note. */
+export function getComplianceCopy(): ComplianceCopy {
+  return complianceCopy;
 }

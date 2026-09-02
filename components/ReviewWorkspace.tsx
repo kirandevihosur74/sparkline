@@ -24,6 +24,7 @@
 import FindingsQueue from "./FindingsQueue";
 import ReviewDetail from "./ReviewDetail";
 import { useCallback, useMemo, useState } from "react";
+import { getDecisionSignature } from "@/lib/data";
 import type {
   AuditRecord,
   ClaimVerdict,
@@ -34,17 +35,6 @@ import type {
   QueryTrace,
   RejectReason,
 } from "@/lib/data";
-
-/**
- * Who is signing when the data layer names nobody.
- *
- * TODO(schema-gap: session identity): there is no current-user or session
- * shape anywhere in lib/types.ts — a reviewer's name exists only on a
- * ReviewRecord that has ALREADY been signed, so before the first decision the
- * app genuinely does not know who is at the keyboard. The signature line says
- * so rather than inventing a name; read it off a session once one exists.
- */
-const UNIDENTIFIED_REVIEWER = "an unidentified reviewer";
 
 /**
  * Placeholder digest for a decision made in this session.
@@ -73,10 +63,11 @@ export interface ReviewWorkspaceProps {
   /** Signed decisions already on the ledger, keyed by `flagId` = finding id. */
   records: AuditRecord[];
   /**
-   * Who is signing, read off the ledger by the caller. Undefined when the run
-   * has no signed decision yet — see TODO(schema-gap: session identity).
+   * Which run is on screen. The signature line is only true of the ledger it
+   * was read off, so it is resolved per-run here rather than left to
+   * DecisionBar's default, which always answers for the demo run.
    */
-  reviewer?: string;
+  reviewId: string;
 }
 
 export default function ReviewWorkspace({
@@ -84,7 +75,7 @@ export default function ReviewWorkspace({
   documents,
   traces,
   records,
-  reviewer,
+  reviewId,
 }: ReviewWorkspaceProps) {
   const [decisions, setDecisions] = useState<Record<string, SessionDecision>>(
     {},
@@ -94,8 +85,6 @@ export default function ReviewWorkspace({
     // resolved, on the first finding there is.
     () => (findings.find((f) => f.status === "open") ?? findings[0])?.id,
   );
-
-  const signer = reviewer ?? UNIDENTIFIED_REVIEWER;
 
   /** The findings as this session sees them: fixture order, session statuses. */
   const sessionFindings = useMemo(
@@ -178,6 +167,26 @@ export default function ReviewWorkspace({
     );
   }
 
+  /**
+   * Who is signing, in what capacity, and where this finding sits in the
+   * queue — all derived in lib/data off THIS run's ledger and findings.
+   *
+   * TODO(schema-gap: session identity): there is no current-user or session
+   * shape anywhere in lib/types.ts — a reviewer's name exists only on a
+   * ReviewRecord that has ALREADY been signed. getDecisionSignature() infers
+   * the signer from the run's last DECISION (never a countersignature, which
+   * endorses rather than takes one) and says "an unidentified reviewer" when a
+   * run has signed nothing at all.
+   */
+  const signature = getDecisionSignature(selected.id, reviewId);
+  /**
+   * The name stamped on a decision taken in this session. It is the SAME name
+   * the pending bar signs with: a bar that reads "Signing as M. Bui" and then
+   * confirms "Approved by P. Ramanathan" is one interaction contradicting
+   * itself, which is what reading the ledger's last ROW used to produce.
+   */
+  const signer = signature.name;
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       <FindingsQueue
@@ -192,6 +201,7 @@ export default function ReviewWorkspace({
         documents={documents}
         trace={traces.find((trace) => trace.flagId === selected.id)}
         reviewer={signer}
+        signature={signature}
         record={recordFor(selected, decisions[selected.id], records, signer)}
         onApprove={handleApprove}
         onReject={handleReject}

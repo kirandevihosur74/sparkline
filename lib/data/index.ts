@@ -56,6 +56,30 @@ export type {
   ScoredTrustBreakdown,
   UnscoredTrustBreakdown,
   TrustScoreBreakdown,
+  // Actors — WHO did the work and in what capacity
+  // (fixture-only — TODO(schema-gap: ReviewRecord))
+  ActorId,
+  ActorRole,
+  Actor,
+  Countersignature,
+  LedgerSummary,
+  // Scale signals — this run as part of something larger. Every number in
+  // these shapes is counted off the fixture run registry; nothing in them is
+  // typed in (view-models only — TODO(schema-gap: Workspace))
+  WorkspaceStat,
+  WorkspaceSummary,
+  FindingsHeader,
+  FindingsFooter,
+  FindingPosition,
+  DecisionSignature,
+  // Trust formula — the arithmetic under the dial, computed from the bars
+  TrustFormulaTerm,
+  TrustFormula,
+  // Workspace policy — TODO(schema-gap: VerificationRule)
+  VerificationRule,
+  WorkspacePolicy,
+  // Compliance copy
+  ComplianceCopy,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
@@ -76,4 +100,23 @@ export {
   getEvents,
   getCoverage,
   getDocumentAvgConfidence,
+  // Actors and signatures
+  getActors,
+  getActor,
+  getRecordActor,
+  getPipelineOwner,
+  getSigningActor,
+  getDecisionSignature,
+  getLedgerSummary,
+  // Scale signals
+  getWorkspaceSummary,
+  getFindingsHeader,
+  getFindingsFooter,
+  getFindingPosition,
+  // Trust formula
+  getTrustFormula,
+  // Workspace policy and compliance copy
+  getVerificationRules,
+  getWorkspacePolicy,
+  getComplianceCopy,
 } from "./fixtures";
