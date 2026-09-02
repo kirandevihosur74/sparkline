@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import { Poppins, Source_Serif_4 } from "next/font/google";
-import AppNav from "@/components/AppNav";
-import ContextBar from "@/components/ContextBar";
 import "./globals.css";
 
 /* Poppins for all UI chrome — 600 is the weight ceiling. */
@@ -30,17 +28,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${poppins.variable} ${sourceSerif.variable} h-full`}
     >
       {/* theme.css base layer pins html/body: height 100%, overflow hidden.
-          The app fills the viewport; columns scroll independently. */}
-      <body className="flex h-full">
-        <AppNav />
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* One header row on every route: the review's title inside a review
-              screen that has none of its own, the screen's own name everywhere
-              else. ContextBar decides — see components/ContextBar.tsx. */}
-          <ContextBar />
-          {children}
-        </main>
-      </body>
+          Whatever renders here fills the viewport; the app shell
+          (app/(app)/layout.tsx) adds the rail, the landing page does not. */}
+      <body className="flex h-full">{children}</body>
     </html>
   );
 }

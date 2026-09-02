@@ -36,7 +36,8 @@ Run the app:
 npm run dev              # http://localhost:3000
 ```
 
-Demo path: **New review → Load sample bundle → Run analysis**. That starts a
+Demo path: **/ (landing) → Launch Sparkline → Load sample bundle → Run
+analysis**. That starts a
 real run (`POST /api/runs`): DWS reads both PDFs, Sparkline compares the
 claims, SerpApi checks the counterparty against the public record. The
 analyzing screen polls the run as the pipeline writes it; the results screen,

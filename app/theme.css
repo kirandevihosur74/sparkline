@@ -57,6 +57,10 @@
   /* ── type scale ──────────────────────────────────────────
      600 is the weight ceiling. Hierarchy comes from size and
      colour, never from heavier weight.                        */
+  --text-hero: 32px;   /* landing headline only */
+  --text-hero--line-height: 1.15;
+  --text-hero--letter-spacing: -0.03em;
+
   --text-display: 22px;
   --text-display--line-height: 1.2;
   --text-display--letter-spacing: -0.025em;
