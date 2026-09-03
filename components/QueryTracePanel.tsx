@@ -28,6 +28,7 @@
 import { useEffect, useState } from "react";
 import type { QueryTrace, TraceResult } from "@/lib/data";
 import { formatUtc } from "@/lib/format";
+import { copyText } from "@/lib/clipboard";
 
 /**
  * Provider attribution sits next to the output it belongs to, so no legend is
@@ -117,10 +118,7 @@ export default function QueryTracePanel({
             type="button"
             aria-label={`Copy query — ${trace.query}`}
             onClick={() => {
-              navigator.clipboard
-                ?.writeText(trace.query)
-                .then(() => setCopyState("copied"))
-                .catch(() => setCopyState("failed"));
+              void copyText(trace.query).then(setCopyState);
             }}
             className="shrink-0 rounded border border-line bg-surface px-3 py-1.5 text-caption font-medium text-ink-2 hover:text-ink focus-visible:shadow-selected focus-visible:outline-none"
           >

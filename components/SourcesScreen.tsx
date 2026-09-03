@@ -57,6 +57,7 @@ import type {
   WorkspaceSources,
 } from "@/lib/data";
 import { formatUtc } from "@/lib/format";
+import { copyText } from "@/lib/clipboard";
 
 /**
  * The screen's own words. Nouns are a design-system concern (DESIGN_SYSTEM.md
@@ -429,10 +430,7 @@ function QueryDetail({
             type="button"
             aria-label={`${COPY.copy} — ${query.query}`}
             onClick={() => {
-              navigator.clipboard
-                ?.writeText(query.query)
-                .then(() => setCopyState("copied"))
-                .catch(() => setCopyState("failed"));
+              void copyText(query.query).then(setCopyState);
             }}
             className="shrink-0 rounded border border-line bg-surface px-3 py-1.5 text-caption font-medium text-ink-2 hover:text-ink focus-visible:shadow-selected focus-visible:outline-none"
           >
