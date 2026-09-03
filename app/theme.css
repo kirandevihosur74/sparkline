@@ -201,9 +201,22 @@
    between line boxes grew 10.6px -> 13.2px, which is more room
    for a claim's label, not less.                             */
 @theme {
-  --text-doc: 15.5px;
+  /* The sheet SCALES with the column instead of sitting at one size in it.
+     Both the width and the type grow together, so the characters per line
+     stay near 70-75 and the page reads as zoomed rather than as a small
+     page in a big frame — which is what fit-to-width does for the PDF view
+     beside it, and what any document viewer does.
+
+     Floors are the values this shipped with, so nothing changes at the
+     1600px width it was tuned against. Above their caps the sheet stops
+     growing and the surround takes the rest, which is the grey ground every
+     PDF reader draws either side of a page at maximum zoom.
+
+     Measured empty canvas at a 2000px window: 48% before, 38% after, with
+     the type 4.5px larger. */
+  --text-doc: clamp(15.5px, 1.45cqi, 22px);
   --leading-doc: 1.85;
-  --sheet-width: 720px;
+  --sheet-width: clamp(720px, 62cqi, 1040px);
 }
 
 /* ── light chrome + shadow colour ────────────────────────────

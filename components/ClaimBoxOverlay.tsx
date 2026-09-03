@@ -237,7 +237,10 @@ export default function ClaimBoxOverlay({
        pane. `items-start` rather than the default stretch: a stretched sheet
        would be exactly the pane's height and its words would spill out the
        bottom of their own paper. */
-    <div className="flex h-full min-h-doc-floor w-full flex-1 items-start justify-center overflow-y-auto rounded border border-line bg-canvas p-4">
+    /* @container: the sheet sizes against THIS box, not the viewport. The
+       column it sits in changes width when the panel, the queue rail or the
+       nav rail move, none of which the viewport ever hears about. */
+    <div className="@container flex h-full min-h-doc-floor w-full flex-1 items-start justify-center overflow-y-auto rounded border border-line bg-canvas p-4">
       <article
         aria-label={page.label}
         className="min-h-full w-full bg-surface px-8 py-7 font-serif text-ink-2 shadow-paper sm:px-16 sm:py-14"
@@ -246,7 +249,8 @@ export default function ClaimBoxOverlay({
              to leave room for a label in the line above the box. */
           lineHeight: DOCUMENT_LINE_HEIGHT,
           fontSize: DOCUMENT_FONT_SIZE,
-          maxWidth: SHEET_MAX_WIDTH,
+          width: SHEET_MAX_WIDTH,
+          maxWidth: "100%",
         }}
       >
         {page.blocks.map((block, blockIndex) => (
