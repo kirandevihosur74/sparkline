@@ -27,9 +27,9 @@ whole data layer and the providers are never called again at runtime.
 | 1 | New review | `/reviews/new` | Two empty document slots, "Load sample bundle", "Run analysis" disabled with `disabled:shadow-none` (0 action shadows until the bundle loads, 1 after). |
 | 2 | Analyzing | `/reviews/demo-2026-08?state=analyzing` | Funnel counters animate 0→12 claims; pipeline rail steps Extract → Compare → Live check; reasoning stream fills. Self-completes after **~16.1 s** (14 recorded events × 1150 ms + tail). |
 | 3 | Complete | `/reviews/demo-2026-08` | **72 %** trust dial, "MODERATE TRUST"; both component bars — Extraction quality **88 % / high**, Cross-document agreement **62 % / low**; "Counted, not scored" strip; coverage bar (11 findings); 11 findings listed. |
-| 4 | Review workspace | `/reviews/demo-2026-08/review` | Findings queue left; evidence face-off + Nutrient WASM viewer (`doc-a-investment-memo.pdf`, "Claim on page 2 of 2") + pinned decision bar "Signing as M. Bui · Nutrient DWS". |
-| 5 | Approved state | same route, click **Approve finding** | Bar flips to a confirmation strip: "Approved by M. Bui · 02 Sept 2026, 02:33 UTC · Nutrient DWS", **Undo decision**, **Next finding →**. |
-| 6 | Audit ledger | `/reviews/demo-2026-08/audit` | **Real table**, not a stub. Columns: Signed · Reviewer · Claim · Decision · Evidence · Record hash (placeholder). Two rows, both reviewer **M. Bui**: `expansion install cost` Approved `fixture-sha256:4c9a1e7f20b6d8a3`; `workmanship warranty` Rejected / Not a conflict `fixture-sha256:b81f3d0c95e24a76` plus a full-width reviewer's note. Three honesty footnotes below. |
+| 4 | Review workspace | `/reviews/demo-2026-08/review` | Findings queue left; evidence face-off + Nutrient WASM viewer (`doc-a-investment-memo.pdf`, "Claim on page 2 of 2") + pinned decision bar "Signing as Michelle · Nutrient DWS". |
+| 5 | Approved state | same route, click **Approve finding** | Bar flips to a confirmation strip: "Approved by Michelle · 02 Sept 2026, 02:33 UTC · Nutrient DWS", **Undo decision**, **Next finding →**. |
+| 6 | Audit ledger | `/reviews/demo-2026-08/audit` | **Real table**, not a stub. Columns: Signed · Reviewer · Claim · Decision · Evidence · Record hash (placeholder). Two rows, both reviewer **Michelle**: `expansion install cost` Approved `fixture-sha256:4c9a1e7f20b6d8a3`; `workmanship warranty` Rejected / Not a conflict `fixture-sha256:b81f3d0c95e24a76` plus a full-width reviewer's note. Three honesty footnotes below. |
 
 ### The degraded run
 
@@ -193,7 +193,7 @@ previous pass were confirmed intact in the browser, so no file under `app/` or
    every workspace screen and from the audit ledger; each of those routes shows
    its own name instead.
 3. **Audit ledger not regressed** — `/reviews/demo-2026-08/audit` renders the
-   real signed table (2 rows, M. Bui, fixture-sha256 hashes), and the degraded
+   real signed table (2 rows, Michelle, fixture-sha256 hashes), and the degraded
    audit renders the ledger's empty state. Neither is a "Designed, not built"
    stub.
 

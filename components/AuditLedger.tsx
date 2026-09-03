@@ -46,7 +46,7 @@
  * Counts follow the same line. "4 decisions · 2 reviewers" counts SIGNED ROWS
  * and nothing else; runs are counted in their own sentence beneath it, exactly
  * as LedgerSummary splits `decisionCount` from `runCount`. Folding a run into
- * the decision count would credit K. Shah with a decision he never took —
+ * the decision count would credit Kiran with a decision he never took —
  * a Pipeline owner executes runs and signs nothing (ActorRole).
  *
  * COUNTERSIGNATURES. A row carrying `countersigns` endorses a decision another
@@ -539,7 +539,7 @@ function decisionRows(records: readonly AuditRecord[]): AuditRecord[] {
 }
 
 /**
- * The run sentence: "2 analysis runs by K. Shah, counted apart from the
+ * The run sentence: "2 analysis runs by Kiran, counted apart from the
  * decisions above — a run signs nothing".
  *
  * Counted off the run rows themselves, like every other number on this screen,

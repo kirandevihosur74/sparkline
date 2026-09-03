@@ -731,7 +731,11 @@ export type TrustScoreBreakdown = ScoredTrustBreakdown | UnscoredTrustBreakdown;
 // ---------------------------------------------------------------------------
 
 /** Stable id for one person in the workspace. Fixture-only — see TODO above. */
-export type ActorId = "actor-bui" | "actor-shah" | "actor-ramanathan";
+export type ActorId =
+  | "actor-michelle"
+  | "actor-chloe"
+  | "actor-kiran"
+  | "actor-joseph";
 
 /**
  * What an actor is entitled to do. Rendered verbatim beside the name, so it is
@@ -747,9 +751,9 @@ export type ActorRole = "Reviewer" | "Pipeline owner" | "Approver";
 /** One person in the workspace. Fixture-only — see TODO above. */
 export interface Actor {
   id: ActorId;
-  /** Two letters, e.g. "MB" — for a dense byline, never for identity. */
+  /** One or two letters, e.g. "M" — for a dense byline, never for identity. */
   initials: string;
-  /** Display name exactly as it is signed, e.g. "M. Bui". */
+  /** Display name exactly as it is signed, e.g. "Michelle". */
   name: string;
   role: ActorRole;
 }
@@ -767,7 +771,7 @@ export interface Countersignature {
   decidedByActorId: ActorId;
   /** ISO timestamp of the decision being endorsed. */
   decidedAt: string;
-  /** Renderable clause, e.g. "Countersigned M. Bui's approval". */
+  /** Renderable clause, e.g. "Countersigned Michelle's approval". */
   label: string;
 }
 
@@ -800,7 +804,7 @@ export interface LedgerSummary {
    * counted NOWHERE in `decisionCount`.
    */
   runCount: number;
-  /** "2 analysis runs by K. Shah", or "No analysis runs recorded" at zero. */
+  /** "2 analysis runs by Kiran", or "No analysis runs recorded" at zero. */
   runText: string;
   /** Rows the ledger renders in total: decisions plus runs. */
   entryCount: number;
@@ -922,7 +926,7 @@ export interface WorkspaceReviewWait {
   state: WorkspaceWaitState;
   /** Absent only when `state` is "nobody". */
   actor?: Actor;
-  /** "Waiting on M. Bui · Reviewer" / "Waiting on nobody · 6 decisions signed". */
+  /** "Waiting on Michelle · Reviewer" / "Waiting on nobody · 6 decisions signed". */
   text: string;
 }
 
@@ -1036,7 +1040,7 @@ export interface DecisionSignature {
   position?: FindingPosition;
   /** Segments in render order, already stripped of empties. */
   segments: readonly string[];
-  /** "Signing as M. Bui · Reviewer · finding 2 of 11". */
+  /** "Signing as Michelle · Reviewer · finding 2 of 11". */
   text: string;
 }
 
@@ -1082,7 +1086,7 @@ interface FindingQueueFilterBase<
    * actor exists — it is the SAME Actor DecisionSignature.actor carries.
    */
   actor?: Actor;
-  /** "All findings · 11" / "Assigned to me · M. Bui · 5" / "Unassigned · 2". */
+  /** "All findings · 11" / "Assigned to me · Michelle · 5" / "Unassigned · 2". */
   text: string;
 }
 
@@ -1143,7 +1147,7 @@ export interface FindingAssignment {
   actor?: Actor;
   /** False exactly when `actor` is absent. */
   assigned: boolean;
-  /** "Assigned to M. Bui · Reviewer" / "Unassigned — this finding names no reviewer". */
+  /** "Assigned to Michelle · Reviewer" / "Unassigned — this finding names no reviewer". */
   text: string;
 }
 
@@ -1210,7 +1214,7 @@ export interface WorkspacePolicy {
   lastModifiedBy: Actor;
   /** Date as printed, e.g. "12 Aug". Presentational. */
   lastModifiedAt: string;
-  /** "Workspace policy · 4 active rules · last modified by K. Shah, 12 Aug". */
+  /** "Workspace policy · 4 active rules · last modified by Kiran, 12 Aug". */
   text: string;
 }
 
@@ -1592,7 +1596,7 @@ interface LedgerEntryBase {
   at: string;
   /** The actor behind the row, when the record names one. */
   actor?: Actor;
-  /** "M. Bui · Reviewer", or the say-so copy when nobody is named. */
+  /** "Michelle · Reviewer", or the say-so copy when nobody is named. */
   byline: string;
 }
 
@@ -2087,7 +2091,7 @@ export interface DashboardWaitGroup {
   actor?: Actor;
   reviewCount: number;
   openFindings: number;
-  /** "M. Bui · Reviewer · 2 reviews · 14 open findings". */
+  /** "Michelle · Reviewer · 2 reviews · 14 open findings". */
   text: string;
 }
 
@@ -2174,7 +2178,7 @@ export interface WorkspaceRunRow {
   reviewHref: string;
   /** Where THIS run opens — a superseded run stays addressable by its own id. */
   runHref: string;
-  /** "K. Shah · Pipeline owner", or the say-so copy when nobody is recorded. */
+  /** "Kiran · Pipeline owner", or the say-so copy when nobody is recorded. */
   ownerText: string;
   /** "11 findings · 16 claims · 2 documents" — counted off the run. */
   outcomeText: string;

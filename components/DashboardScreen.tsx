@@ -550,7 +550,7 @@ function CountRow({
 /**
  * Who is holding what.
  *
- * Each row prints the group's OWN sentence — "M. Bui · Reviewer · 2 reviews ·
+ * Each row prints the group's OWN sentence — "Michelle · Reviewer · 2 reviews ·
  * 14 open findings", "Waiting on analysis · 1 review · No findings yet". It is
  * not re-split into columns here on purpose: the data layer is what keeps
  * "No open findings" (nothing left to decide) apart from "No findings yet"

@@ -547,7 +547,7 @@ function RailDot({
  * A filter that cannot be resolved is DISABLED and shows its headline where
  * its count would be: it has no number, and printing 0 would answer a question
  * the run cannot answer. The accessible name is the model's own composed line
- * — "Assigned to me · M. Bui · 5" — so the actor the filter resolves to is
+ * — "Assigned to me · Michelle · 5" — so the actor the filter resolves to is
  * announced even though the row stays short enough to read at a glance.
  */
 function FilterControl({
