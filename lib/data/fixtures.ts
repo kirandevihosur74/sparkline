@@ -517,41 +517,57 @@ const queryTraces: QueryTrace[] = [
 // countersignature link, so nothing below survives a round trip through the
 // contract today. See the full statement on Actor in lib/data/types.ts.
 //
-// Three people, three capacities, deliberately not interchangeable: K. Shah
-// executed the analysis run and signs nothing; M. Bui reviews and signs;
-// P. Ramanathan countersigns what M. Bui signs. Attributing every record to
-// "M. Bui" — which is what a single free string forces — is what made this
+// Four people, three capacities, deliberately not interchangeable: Kiran
+// executes analysis runs and signs nothing; Michelle and Chloe review and
+// sign; Joseph countersigns what a reviewer signs. Attributing every record to
+// one name — which is what a single free string forces — is what made this
 // read like one person's notebook.
+//
+// A roster is not an activity log. Chloe is on it and holds no signature on
+// this workspace's ledger, and her card says exactly that rather than a row of
+// zeros: an absence of records is not a measure of someone's work.
 // ---------------------------------------------------------------------------
 
 const actors = {
-  bui: {
-    id: "actor-bui",
-    initials: "MB",
-    name: "M. Bui",
+  michelle: {
+    id: "actor-michelle",
+    initials: "M",
+    name: "Michelle",
     role: "Reviewer",
   },
-  shah: {
-    id: "actor-shah",
-    initials: "KS",
-    name: "K. Shah",
+  kiran: {
+    id: "actor-kiran",
+    initials: "K",
+    name: "Kiran",
     role: "Pipeline owner",
   },
-  ramanathan: {
-    id: "actor-ramanathan",
-    initials: "PR",
-    name: "P. Ramanathan",
+  joseph: {
+    id: "actor-joseph",
+    initials: "J",
+    name: "Joseph",
     role: "Approver",
+  },
+  chloe: {
+    id: "actor-chloe",
+    initials: "C",
+    name: "Chloe",
+    role: "Reviewer",
   },
 } satisfies Record<string, Actor>;
 
-/** Roster order: reviewer, pipeline owner, approver. */
-const actorList: readonly Actor[] = [actors.bui, actors.shah, actors.ramanathan];
+/** Roster order: the two reviewers, then the pipeline owner, then the approver. */
+const actorList: readonly Actor[] = [
+  actors.michelle,
+  actors.chloe,
+  actors.kiran,
+  actors.joseph,
+];
 
 const actorsById: Record<ActorId, Actor> = {
-  "actor-bui": actors.bui,
-  "actor-shah": actors.shah,
-  "actor-ramanathan": actors.ramanathan,
+  "actor-michelle": actors.michelle,
+  "actor-chloe": actors.chloe,
+  "actor-kiran": actors.kiran,
+  "actor-joseph": actors.joseph,
 };
 
 /**
@@ -579,13 +595,13 @@ const COUNTERSIGNATURE_POLICY =
 // unrepresentable in lib/types.ts (the full statement is on Finding.assignee
 // in lib/data/types.ts). The split reads 5 / 4 / 2:
 //
-//   M. Bui, Reviewer (5) — everything she has already put a signature on or is
+//   Michelle, Reviewer (5) — everything she has already put a signature on or is
 //     on the hook for. Both flags (the CRITICAL staleness and the HIGH
 //     contradiction) plus the warranty rejection are hers on the ledger
 //     already, and the two remaining Freedom Forever claims — counterparty
 //     scale, and the date of the agreement with that counterparty — turn on
 //     the same Chapter 11 event, so they sit with the reviewer who signed it.
-//   P. Ramanathan, Approver (4) — the four cross-document agreement checks, as
+//   Joseph, Approver (4) — the four cross-document agreement checks, as
 //     two pairs: both halves of portfolio capacity and both halves of the
 //     commercial operation date. One actor holds both sides of a pair, so
 //     nobody is asked to confirm an agreement they can only see half of.
@@ -601,7 +617,7 @@ const contradictionFinding: ContradictionFinding = {
   verdict: "conflicting",
   label: "Expansion installation cost",
   materiality: "high",
-  assignee: actors.bui,
+  assignee: actors.michelle,
   status: contradictionFlag.status,
   summary:
     "The memo and the independent engineer price the same expansion program $25M apart \u2014 13.4% of the memo figure, and the gap lands entirely on sponsor equity. The IE number is built bottom-up from current labor rates, observed equipment pricing and mobilization costs; the memo shows no basis for its own.",
@@ -626,7 +642,7 @@ const stalenessFinding: StalenessFinding = {
   verdict: "stale",
   label: "Counterparty standing",
   materiality: "critical",
-  assignee: actors.bui,
+  assignee: actors.michelle,
   status: stalenessFlag.status,
   summary:
     "The memo is dated March 20, 2026 and records the master installation agreement as in good standing; Freedom Forever LLC filed a voluntary Chapter 11 petition on April 15, 2026. The memo was accurate when written \u2014 what changed is the world, and everything resting on the installer moves with it: the expansion schedule and the 25-year workmanship warranty.",
@@ -645,7 +661,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "corroborated",
     label: "Counterparty scale",
     materiality: "medium",
-    assignee: actors.bui,
+    assignee: actors.michelle,
     status: "open",
     claim: claims.a5,
     source: {
@@ -661,7 +677,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Portfolio capacity",
     materiality: "low",
-    assignee: actors.ramanathan,
+    assignee: actors.joseph,
     status: "open",
     claim: claims.a2,
     source: {
@@ -677,7 +693,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Portfolio capacity (IE verification)",
     materiality: "low",
-    assignee: actors.ramanathan,
+    assignee: actors.joseph,
     status: "open",
     claim: claims.b2,
     source: {
@@ -693,7 +709,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Commercial operation target",
     materiality: "low",
-    assignee: actors.ramanathan,
+    assignee: actors.joseph,
     status: "open",
     claim: claims.a3,
     source: {
@@ -708,7 +724,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Commercial operation (IE schedule)",
     materiality: "low",
-    assignee: actors.ramanathan,
+    assignee: actors.joseph,
     status: "open",
     claim: claims.b3,
     source: {
@@ -724,7 +740,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Agreement execution date",
     materiality: "low",
-    assignee: actors.bui,
+    assignee: actors.michelle,
     status: "open",
     claim: claims.a7,
     source: {
@@ -740,7 +756,7 @@ const claimFindings: ClaimFinding[] = [
     verdict: "review_required",
     label: "Workmanship warranty",
     materiality: "high",
-    assignee: actors.bui,
+    assignee: actors.michelle,
     status: "rejected",
     claim: claims.a6,
     source: {
@@ -844,8 +860,8 @@ const trustScore: TrustScore = {
 const auditRecords: AuditRecord[] = [
   {
     flagId: CONTRADICTION_FLAG_ID,
-    reviewer: actors.bui.name,
-    actorId: actors.bui.id,
+    reviewer: actors.michelle.name,
+    actorId: actors.michelle.id,
     decision: "approved",
     signedAt: "2026-08-31T05:12:47.000Z",
     signedDocumentUrl: "/records/demo-2026-08/flag-contradiction-epc-cost.pdf",
@@ -856,8 +872,8 @@ const auditRecords: AuditRecord[] = [
   },
   {
     flagId: CONTRADICTION_FLAG_ID,
-    reviewer: actors.ramanathan.name,
-    actorId: actors.ramanathan.id,
+    reviewer: actors.joseph.name,
+    actorId: actors.joseph.id,
     decision: "approved",
     signedAt: "2026-08-31T05:18:03.000Z",
     signedDocumentUrl:
@@ -868,15 +884,15 @@ const auditRecords: AuditRecord[] = [
     evidenceSummary:
       "Countersignature: IE bottom-up estimate accepted as the diligence figure",
     countersigns: {
-      decidedByActorId: actors.bui.id,
+      decidedByActorId: actors.michelle.id,
       decidedAt: "2026-08-31T05:12:47.000Z",
-      label: "Countersigned M. Bui's approval",
+      label: "Countersigned Michelle's approval",
     },
   },
   {
     flagId: "finding-warranty",
-    reviewer: actors.bui.name,
-    actorId: actors.bui.id,
+    reviewer: actors.michelle.name,
+    actorId: actors.michelle.id,
     decision: "rejected",
     signedAt: "2026-08-31T05:14:12.000Z",
     signedDocumentUrl: "/records/demo-2026-08/finding-warranty.pdf",
@@ -890,8 +906,8 @@ const auditRecords: AuditRecord[] = [
   },
   {
     flagId: "finding-warranty",
-    reviewer: actors.ramanathan.name,
-    actorId: actors.ramanathan.id,
+    reviewer: actors.joseph.name,
+    actorId: actors.joseph.id,
     decision: "rejected",
     signedAt: "2026-08-31T05:18:41.000Z",
     signedDocumentUrl:
@@ -902,9 +918,9 @@ const auditRecords: AuditRecord[] = [
     evidenceSummary:
       "Countersignature: exposure stays on the counterparty standing flag, not duplicated here",
     countersigns: {
-      decidedByActorId: actors.bui.id,
+      decidedByActorId: actors.michelle.id,
       decidedAt: "2026-08-31T05:14:12.000Z",
-      label: "Countersigned M. Bui's rejection",
+      label: "Countersigned Michelle's rejection",
     },
   },
 ];
@@ -1120,7 +1136,7 @@ const degradedContradictionFinding: ContradictionFinding = {
  * verification strategy completed" — and each note names the consequence
  * (unconfirmed) before the cause (the refused query).
  *
- * All three are assigned to M. Bui, on the same reasoning as the happy path:
+ * All three are assigned to Michelle, on the same reasoning as the happy path:
  * they are the Freedom Forever cluster, and it is one counterparty question.
  * A stranded finding still belongs in somebody's queue — a refused query
  * changes what is known about the claim, not who owes it a decision.
@@ -1131,7 +1147,7 @@ const degradedUncheckedFindings: ClaimFinding[] = [
     verdict: "unverified",
     label: "Counterparty standing",
     materiality: "critical",
-    assignee: actors.bui,
+    assignee: actors.michelle,
     status: "open",
     claim: claims.a4,
     source: {
@@ -1149,7 +1165,7 @@ const degradedUncheckedFindings: ClaimFinding[] = [
     verdict: "unverified",
     label: "Workmanship warranty",
     materiality: "high",
-    assignee: actors.bui,
+    assignee: actors.michelle,
     status: "open",
     claim: claims.a6,
     source: {
@@ -1167,7 +1183,7 @@ const degradedUncheckedFindings: ClaimFinding[] = [
     verdict: "unverified",
     label: "Counterparty scale",
     materiality: "medium",
-    assignee: actors.bui,
+    assignee: actors.michelle,
     status: "open",
     claim: claims.a5,
     source: {
@@ -1199,9 +1215,9 @@ const degradedCarriedFindings: ClaimFinding[] = claimFindings
  * contradiction — but the live-check outcomes are gone: 1 conflicting,
  * 5 consistent, 5 unverified. Queue order is materiality first.
  *
- * The assignment split is 5 / 4 / 2 here too — M. Bui holds the contradiction,
+ * The assignment split is 5 / 4 / 2 here too — Michelle holds the contradiction,
  * the agreement date and all three stranded Freedom Forever findings;
- * P. Ramanathan holds the same four cross-document pairs; the two private
+ * Joseph holds the same four cross-document pairs; the two private
  * assumptions are unassigned. What this run cannot say is which of those five
  * are "mine": it signed no decision, so nothing names who is at the keyboard.
  * See getFindingQueue().
@@ -1642,7 +1658,7 @@ const previousCapacityFinding: ContradictionFinding = {
   verdict: "conflicting",
   label: "Portfolio capacity",
   materiality: "medium",
-  assignee: actors.ramanathan,
+  assignee: actors.joseph,
   status: previousCapacityFlag.status,
   summary:
     "The memo counts 250 MW of aggregate installed and contracted capacity; the January engineering report counts 240 MW. 10 MW is 4.0% of the portfolio, and every per-MW figure in the model is quoted against the memo's number.",
@@ -1676,7 +1692,7 @@ const previousClaimFindings: ClaimFinding[] = [
     verdict: "corroborated",
     label: "Counterparty scale",
     materiality: "medium",
-    assignee: actors.bui,
+    assignee: actors.michelle,
     status: "open",
     claim: claims.a5,
     source: {
@@ -1692,7 +1708,7 @@ const previousClaimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Commercial operation target",
     materiality: "low",
-    assignee: actors.ramanathan,
+    assignee: actors.joseph,
     status: "open",
     claim: claims.a3,
     source: {
@@ -1707,7 +1723,7 @@ const previousClaimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Commercial operation (IE schedule)",
     materiality: "low",
-    assignee: actors.ramanathan,
+    assignee: actors.joseph,
     status: "open",
     claim: previousClaims.b3,
     source: {
@@ -1723,7 +1739,7 @@ const previousClaimFindings: ClaimFinding[] = [
     verdict: "consistent",
     label: "Agreement execution date",
     materiality: "low",
-    assignee: actors.bui,
+    assignee: actors.michelle,
     status: "open",
     claim: claims.a7,
     source: {
@@ -1739,7 +1755,7 @@ const previousClaimFindings: ClaimFinding[] = [
     verdict: "review_required",
     label: "Workmanship warranty",
     materiality: "high",
-    assignee: actors.bui,
+    assignee: actors.michelle,
     status: "open",
     claim: claims.a6,
     source: {
@@ -1929,14 +1945,14 @@ const runs: Record<string, FixtureRun> = {
     stages,
     events,
     listed: true,
-    // The 9 findings still open are decisions, and M. Bui is the actor who
-    // signs decisions on this ledger (P. Ramanathan countersigns them).
-    assignedTo: actors.bui.id,
+    // The 9 findings still open are decisions, and Michelle is the actor who
+    // signs decisions on this ledger (Joseph countersigns them).
+    assignedTo: actors.michelle.id,
     // The run this one re-ran, and the owner who ran it. Both are the whole of
     // TODO(schema-gap: run history) in one place: the contract has no id for
     // an analysis and no field for the person who executed one.
     previousRunId: PREVIOUS_RUN_ID,
-    ranByActorId: actors.shah.id,
+    ranByActorId: actors.kiran.id,
   },
   [PREVIOUS_RUN_ID]: {
     review: previousReview,
@@ -1953,7 +1969,7 @@ const runs: Record<string, FixtureRun> = {
     listed: false,
     // Nobody owes this run a decision: the re-run replaced its output. An
     // assignee here would put work in a reviewer's queue that no longer exists.
-    ranByActorId: actors.shah.id,
+    ranByActorId: actors.kiran.id,
   },
   [DEGRADED_REVIEW_ID]: {
     review: degradedReview,
@@ -1969,7 +1985,7 @@ const runs: Record<string, FixtureRun> = {
     // Executed by the same pipeline owner, and linked to no previous run: it
     // is an ALTERNATE STATE of the demo run, not a third link in its chain, so
     // it reports its own single run and no diff.
-    ranByActorId: actors.shah.id,
+    ranByActorId: actors.kiran.id,
   },
 };
 
@@ -2415,7 +2431,7 @@ export function getRecordActor(record: AuditRecord): Actor | undefined {
 
 /** Who ran the analysis. Named next to pipeline output, never next to a signature. */
 export function getPipelineOwner(): Actor {
-  return actors.shah;
+  return actors.kiran;
 }
 
 /**
@@ -2440,7 +2456,7 @@ export function getSigningActor(
  * Signature line for the decision bar: who is signing, in what capacity, and
  * where the finding sits in the queue.
  *
- * "Signing as M. Bui · Reviewer · finding 2 of 11". Every part is derived —
+ * "Signing as Michelle · Reviewer · finding 2 of 11". Every part is derived —
  * the name and role off the run's ledger, the position off getFindings() — so
  * the line cannot drift from the queue it describes. Pass the selected
  * finding's id; omit it and the position segment is left off.
@@ -3120,10 +3136,10 @@ type SceneryReview = SceneryReviewBase &
  * Ids are prefixed "scenery-" so one can be recognised for what it is at a
  * glance — in a log line as much as in this file.
  *
- * Assignment follows the workspace's own policy: M. Bui signs decisions, so
- * reviews with undecided findings sit with her; P. Ramanathan approves, and
- * Ashcombe's remaining items are the high-materiality kind
- * COUNTERSIGNATURE_POLICY routes to an approver. K. Shah runs pipelines and
+ * Assignment follows the workspace's own policy: Michelle and Chloe both sign
+ * decisions, so reviews with undecided findings sit with one of them; Joseph
+ * approves, and Ashcombe's remaining items are the high-materiality kind
+ * COUNTERSIGNATURE_POLICY routes to an approver. Kiran runs pipelines and
  * signs nothing, so no review waits on him.
  */
 const SCENERY_REVIEWS: readonly SceneryReview[] = [
@@ -3142,7 +3158,7 @@ const SCENERY_REVIEWS: readonly SceneryReview[] = [
       reason:
         "Analysis is still running, so this review has recorded no readings to blend.",
     },
-    assignedTo: "actor-bui",
+    assignedTo: "actor-michelle",
   },
   {
     id: "scenery-calder-point",
@@ -3152,7 +3168,7 @@ const SCENERY_REVIEWS: readonly SceneryReview[] = [
     openFindings: 5,
     signedFindings: 1,
     trustScoreRaw: 66,
-    assignedTo: "actor-bui",
+    assignedTo: "actor-chloe",
   },
   {
     id: "scenery-ashcombe-fund-ii",
@@ -3163,7 +3179,7 @@ const SCENERY_REVIEWS: readonly SceneryReview[] = [
     openFindings: 3,
     signedFindings: 2,
     trustScoreRaw: 74,
-    assignedTo: "actor-ramanathan",
+    assignedTo: "actor-joseph",
   },
   {
     id: "scenery-ferrisbrook-hydro",
@@ -3629,7 +3645,7 @@ const UNRESOLVED_ME: QueueFilterUnresolved = {
     "This run cannot say which findings are yours — no decision has been signed on it, so nothing names who is at the keyboard. Findings here are assigned; who you are is what is missing.",
 };
 
-/** The assignment line on one finding: "Assigned to M. Bui · Reviewer". */
+/** The assignment line on one finding: "Assigned to Michelle · Reviewer". */
 export function getFindingAssignment(finding: Finding): FindingAssignment {
   const actor = finding.assignee;
   return {
@@ -3646,7 +3662,7 @@ export function getFindingAssignment(finding: Finding): FindingAssignment {
  * unassigned, each carrying how many findings it would leave.
  *
  * "Me" is getSigningActor(reviewId) — the actor the decision bar signs as. On
- * the demo run that is M. Bui, who signed both decisions on the ledger, and
+ * the demo run that is Michelle, who signed both decisions on the ledger, and
  * the queue and the bar therefore agree on who "me" is by construction rather
  * than by coincidence.
  *
@@ -3858,7 +3874,7 @@ export function getVerificationRules(): readonly VerificationRule[] {
 
 /**
  * The policy line above the rules list:
- * "Workspace policy · 4 active rules · last modified by K. Shah, 12 Aug".
+ * "Workspace policy · 4 active rules · last modified by Kiran, 12 Aug".
  *
  * The 4 is derived from the rules themselves. The editor is the workspace's
  * pipeline owner — an admin sets policy, reviewers inherit it — and the date is
@@ -4677,7 +4693,7 @@ const ACTIVITY_LABEL: Record<ActorActivityFactId, [string, string]> = {
 };
 
 /**
- * The Team screen — the three workspace actors, each with the activity the
+ * The Team screen — the workspace roster, each actor with the activity the
  * RECORD attributes to them.
  *
  * DERIVED FROM: getActors() for the roster, getLedgerEntries() on every listed
@@ -4686,7 +4702,7 @@ const ACTIVITY_LABEL: Record<ActorActivityFactId, [string, string]> = {
  * still owed a decision by each actor.
  *
  * ZERO IS NEVER PRINTED. A fact is built only when its count is non-zero, so
- * K. Shah's row reads "2 analysis runs executed" and does not also report that
+ * Kiran's row reads "2 analysis runs executed" and does not also report that
  * he has signed no decisions — a Pipeline owner signing nothing is what the
  * role MEANS, and "0 decisions" would read as an underperforming reviewer. An
  * actor with no facts at all carries `inactiveNote` in their place.

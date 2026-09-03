@@ -250,7 +250,7 @@ test("applyLedger keeps a countersignature and its decision apart", () => {
    */
   const decision: AuditRecord = {
     flagId: "flag-x",
-    reviewer: "M. Bui",
+    reviewer: "Michelle",
     decision: "approved",
     signedAt: "2026-09-01T00:00:00.000Z",
     contentHash: "sha256:aaa",
@@ -260,11 +260,11 @@ test("applyLedger keeps a countersignature and its decision apart", () => {
   };
   const countersignature: AuditRecord = {
     ...decision,
-    reviewer: "P. Ramanathan",
+    reviewer: "Joseph",
     signedAt: "2026-09-01T01:00:00.000Z",
     contentHash: "sha256:bbb",
     countersigns: {
-      decidedByActorId: "actor-bui",
+      decidedByActorId: "actor-michelle",
       decidedAt: decision.signedAt,
       label: "Countersigned",
     },
@@ -279,12 +279,12 @@ test("applyLedger keeps a countersignature and its decision apart", () => {
      that is what this merge is for — and still leaves the endorsement alone.
      The sign route never sets `countersigns`, so a live row is always a
      decision. */
-  const real: AuditRecord = { ...decision, contentHash: "sha256:real", reviewer: "K. Shah" };
+  const real: AuditRecord = { ...decision, contentHash: "sha256:real", reviewer: "Kiran" };
   const replaced = applyLedger(run, [real]);
   assert.equal(replaced.auditRecords.length, 2);
   assert.equal(
     replaced.auditRecords.find((r) => !r.countersigns)?.reviewer,
-    "K. Shah",
+    "Kiran",
     "the live decision replaced the fixture one",
   );
   assert.ok(

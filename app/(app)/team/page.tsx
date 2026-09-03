@@ -2,8 +2,8 @@
  * /team — the people this workspace records.
  *
  * No longer a stub. The stub said the demo "signs every decision as one fixed
- * reviewer, so there is no roster to show"; three actors now sign, countersign
- * and run on this ledger, and getWorkspaceTeam() counts each of them off the
+ * reviewer, so there is no roster to show"; the roster signs, countersigns
+ * and runs on this ledger, and getWorkspaceTeam() counts each of them off the
  * audit ledger and the review portfolio. The stub also promised "which reviews
  * are assigned to whom" — the reviews index already knows who each review is
  * waiting on, so the screen shows that too.

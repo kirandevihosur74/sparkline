@@ -1,12 +1,12 @@
 /**
- * TeamScreen — the body of `/team`: the three people this workspace's record
+ * TeamScreen — the body of `/team`: the people this workspace's record
  * names, and what that record says each of them has actually done.
  *
  * WHAT REPLACED THE STUB. The stub said the screen would hold "the people who
  * can decide findings, the signing identity each of them approves under, and
  * which reviews are assigned to whom", and admitted there was no roster
  * because "the demo signs every decision as one fixed reviewer". Neither half
- * is true any more: three actors sign, run and countersign on this ledger, and
+ * is true any more: the roster signs, runs and countersigns on this ledger, and
  * `getWorkspaceTeam()` counts each of them off the audit ledger and the review
  * portfolio. So the screen renders that instead of an emptiness that no longer
  * exists.
@@ -20,7 +20,7 @@
  * list beneath a count can never disagree with it.
  *
  * ZERO IS NEVER PRINTED AS A MEASUREMENT. `ActorActivity.facts` holds only
- * non-zero counts, so K. Shah's card reads "2 analysis runs executed" and does
+ * non-zero counts, so Kiran's card reads "2 analysis runs executed" and does
  * not also report that he signed no decisions — a pipeline owner signing
  * nothing is what the role MEANS, and "0 decisions" would read as a measured
  * shortfall. An actor with nothing at all on the record carries `inactiveNote`
@@ -75,7 +75,7 @@ import type {
 const COPY = {
   rosterLabel: "People this workspace records",
   eyebrow: "People this workspace records",
-  lede: "The three people named on this workspace's own record, and what the record says each of them has done. Nobody is listed here who has not signed, countersigned or run something — this is a record of work, not a directory.",
+  lede: "The people this workspace works through, and what its record says each of them has done. The counts are the record's, not an appraisal: someone on the roster who has signed nothing shows an empty record rather than a row of zeros.",
   /**
    * Sits where every other screen names its provider. None is named here on
    * purpose: no provider produced a roster, a signature or an assignment.

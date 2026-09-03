@@ -307,7 +307,7 @@ export default function FindingCard({
           <p className="text-caption font-medium text-ink">{change.label}</p>
         ) : null}
 
-        {/* Quiet, and always present: "Assigned to M. Bui · Reviewer", or the
+        {/* Quiet, and always present: "Assigned to Michelle · Reviewer", or the
             unassigned sentence. Same tone either way — the words carry it, and
             there is no dot, chip or rule to make an owner look like a state. */}
         <p className="text-caption text-ink-3">{assignment.text}</p>
