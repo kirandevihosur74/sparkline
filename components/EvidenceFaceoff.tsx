@@ -21,6 +21,7 @@
  * Server component — renders props, holds no state.
  */
 
+import ClampedText from "./ClampedText";
 import type {
   ContradictionFinding,
   DocumentMeta,
@@ -303,9 +304,32 @@ function Side({
           {formatPercent(confidence)} {confidenceLabel}
         </span>
         {excerpt ? (
-          <p className="font-serif text-body break-words text-ink-2">
-            &ldquo;{excerpt}&rdquo;
-          </p>
+          /*
+           * Clamped ONLY while the cells are narrow, and that qualifier is the
+           * whole of the design.
+           *
+           * Measured: at a 942px strip the clamp hid one line of one excerpt
+           * and its control cost a line back, so the strip came out 17px
+           * TALLER than with no clamp at all. And stacking does not make
+           * excerpts tall — it makes each cell full width, so they need FEWER
+           * lines: at a 532px strip nothing was cut at all.
+           *
+           * The excerpt is only tall in the narrow side-by-side band, roughly
+           * 560-700px of strip, where a cell is ~30 characters across and a
+           * quoted passage runs to six lines. That is the only place this
+           * earns its control, so it is the only place it clamps.
+           *
+           * Tying the clamp to a container query rather than to state makes
+           * the control self-correcting: where the class does not apply,
+           * nothing is cut, the measurement reads zero, and no control is
+           * drawn. Three lines, not two — this is the evidence itself, and two
+           * lines of a quoted passage too often ends mid-clause.
+           */
+          <ClampedText
+            text={`\u201C${excerpt}\u201D`}
+            clampClassName="@max-[700px]/faceoff:line-clamp-3"
+            className="font-serif text-body break-words text-ink-2"
+          />
         ) : note ? (
           <p className="text-body break-words text-ink-2">{note}</p>
         ) : (
