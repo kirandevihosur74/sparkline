@@ -226,8 +226,24 @@ export default function ReviewDetail({
       aria-label={`Finding detail — ${finding.label}`}
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
-      <div className="scroll-col flex flex-1 flex-col gap-4 p-5">
-        <header className="rounded border border-line bg-surface px-5 py-4">
+      {/*
+       * A FLEX COLUMN THAT SCROLLS, not a scrolling stack.
+       *
+       * This column used to be one long page: header, evidence, document and
+       * trace laid end to end, scrolled as a unit. Measured at 1600x1000 that
+       * put 481px — 56% of the column — above the source document, left 373 of
+       * its 1139px on screen, and asked the reviewer to scroll 786px to reach
+       * the bottom of a page they are being asked to make a decision about.
+       *
+       * Now the header and the evidence take only what they need, and the
+       * DOCUMENT TAKES THE REST: it is the flex-1 child, so on a tall screen it
+       * gets most of the column and scrolls inside itself. When the leftover
+       * falls under --spacing-doc-min it stops giving way and this column
+       * scrolls instead, which is what keeps the query trace below it
+       * reachable rather than crushed.
+       */}
+      <div className="scroll-col flex min-h-0 flex-1 flex-col gap-4 p-5">
+        <header className="shrink-0 rounded border border-line bg-surface px-5 py-4">
           <span className="flex items-center gap-1.5 text-micro uppercase">
             {/* The only non-text mark in the system: a 5px status dot. */}
             <span
@@ -262,28 +278,41 @@ export default function ReviewDetail({
           </div>
 
           {finding.summary ? (
-            <p className="mt-2 text-body text-ink-2">{finding.summary}</p>
+            /* The confidence row is handed to the clamp so its control can
+               sit ON that row rather than under the paragraph. On its own
+               line the control cost exactly the line the clamp saved, and
+               the header came out a pixel TALLER than before it existed. */
+            <ClampedSummary text={finding.summary}>
+              <ConfidenceMeter
+                value={headlineConfidence(finding)}
+                caption={CONFIDENCE_CAPTION[finding.verdict]}
+              />
+            </ClampedSummary>
           ) : (
-            /* The system says what it does not know. */
-            <p className="mt-2 text-body text-ink-3">
-              No summary was written for this finding — the evidence below is
-              the whole of what the run recorded.
-            </p>
+            <>
+              {/* The system says what it does not know. */}
+              <p className="mt-2 text-body text-ink-3">
+                No summary was written for this finding — the evidence below is
+                the whole of what the run recorded.
+              </p>
+              <div className="mt-3">
+                <ConfidenceMeter
+                  value={headlineConfidence(finding)}
+                  caption={CONFIDENCE_CAPTION[finding.verdict]}
+                />
+              </div>
+            </>
           )}
-
-          <div className="mt-3">
-            <ConfidenceMeter
-              value={headlineConfidence(finding)}
-              caption={CONFIDENCE_CAPTION[finding.verdict]}
-            />
-          </div>
         </header>
 
-        {finding.verdict === "conflicting" || finding.verdict === "stale" ? (
-          <EvidenceFaceoff finding={finding} documents={documents} />
-        ) : (
-          <ClaimEvidence finding={finding} documents={documents} />
-        )}
+        {/* Takes what it needs and no more; the document gets the rest. */}
+        <div className="shrink-0">
+          {finding.verdict === "conflicting" || finding.verdict === "stale" ? (
+            <EvidenceFaceoff finding={finding} documents={documents} />
+          ) : (
+            <ClaimEvidence finding={finding} documents={documents} />
+          )}
+        </div>
 
         {/* NOT keyed by finding: two findings can cite the same file, and
             remounting would restart the viewer's WASM to show a document that
@@ -307,7 +336,9 @@ export default function ReviewDetail({
          * See QueryTracePanel and lib/data/types.ts.
          */}
         {finding.verdict === "stale" && !panelOpen ? (
-          <QueryTracePanel trace={trace} findingLabel={finding.label} />
+          <div className="shrink-0">
+            <QueryTracePanel trace={trace} findingLabel={finding.label} />
+          </div>
         ) : null}
       </div>
 
@@ -590,14 +621,25 @@ function DocumentPane({
     : `Claim on page ${claimPage}`;
 
   return (
-    <section aria-label="Source document" className="flex flex-col gap-3">
+    <section
+      aria-label="Source document"
+      /*
+       * flex-1 with a floor: the pane takes the height the header and the
+       * evidence leave it, and stops giving way at --spacing-doc-min. Below
+       * that the column above scrolls instead — see the comment on the column.
+       * min-h-0 is what lets the rendition inside actually shrink; without it
+       * a flex child refuses to go below its content and the floor never
+       * engages.
+       */
+      className="flex min-h-doc-min flex-1 flex-col gap-3"
+    >
       {/* Renders nothing; reports the page on screen upward. See below. */}
       <PageContextReporter
         documentId={active.source.documentId}
         page={stripPage}
         onChange={onPageContextChange}
       />
-      <div className="rounded border border-line bg-surface px-4 py-2.5">
+      <div className="shrink-0 rounded border border-line bg-surface px-4 py-2.5">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="min-w-0 truncate text-label font-medium text-ink">
@@ -721,31 +763,44 @@ function DocumentPane({
         onShowAllChange={onShowAllChange}
       />
 
+      {/* THE RENDITION OWNS THE LEFTOVER. Everything else in this pane —
+          toolbar, claim strip, caption, key — is chrome that takes its own
+          height; the page is what the reviewer came to read, so it gets the
+          rest and scrolls inside itself rather than pushing the pane taller
+          and the whole column into a scroll. */}
       {markedText && facsimile ? (
         <>
           {/* The boxes. Selection is the finding on screen, so the box around
               its claim is the heavier one, and clicking any other box moves
               the whole screen to that finding. */}
-          <ClaimBoxOverlay
-            page={facsimile}
-            selectedFindingId={findingId}
-            showAllClaims={showAll}
-            onSelectFinding={onSelectFinding}
-          />
+          <div className="scroll-col min-h-0 flex-1">
+            <ClaimBoxOverlay
+              page={facsimile}
+              selectedFindingId={findingId}
+              showAllClaims={showAll}
+              onSelectFinding={onSelectFinding}
+            />
+          </div>
           {/* What this is, in the data layer's own words: a text rendition
               with the claims marked, not a render of the page. The provider
               is named next to its output inside that sentence. */}
-          <p className="text-caption text-ink-3">
+          <p className="shrink-0 text-caption text-ink-3">
             {facsimile.label} · {facsimile.provenance}
           </p>
         </>
       ) : (
-        <ViewerEmbed
-          ref={viewerRef}
-          documentUrl={documentUrl(active.source.documentId)}
-          page={claimPage}
-          onVisiblePageChange={setVisiblePage}
-        />
+        /* The viewer's shell is `h-full`, which resolved to nothing while this
+           pane was a block in a scrolling page — so its 480px floor always
+           won, and it showed 43% of a letter page. A flex child with a real
+           height is what makes that `h-full` mean something. */
+        <div className="min-h-0 flex-1">
+          <ViewerEmbed
+            ref={viewerRef}
+            documentUrl={documentUrl(active.source.documentId)}
+            page={claimPage}
+            onVisiblePageChange={setVisiblePage}
+          />
+        </div>
       )}
 
       {/* The key names the four box colours — the fourth only while show-all
@@ -809,6 +864,82 @@ function documentName(
 }
 
 /** See TODO(schema-gap: Document) on DocumentPane. */
+/**
+ * The finding's summary, clamped to two lines until asked for the rest.
+ *
+ * The header used to spend up to 58px on three lines of prose (77px at
+ * 1440, where the longest summary wraps to four), and the document below it
+ * was the thing going without: 56% of the column's height was consumed
+ * before the source page even started. Two lines is enough to know what the
+ * finding is about; the rest is one click away.
+ *
+ * MEASURED, not assumed. `line-clamp-2` hides the overflow but cannot tell
+ * anyone it did, so a summary that happens to fit in two lines would still
+ * get a "More" control that expands nothing — the dead control this project
+ * keeps refusing. The button appears only when the text is genuinely taller
+ * than its clamp, which is a fact about the rendered box and therefore has
+ * to be read from the DOM after layout.
+ *
+ * It is re-measured when the width changes, because the same sentence wraps
+ * to two lines at 1600 and four at 1440, and a control that was correct at
+ * one width is wrong at the other.
+ */
+function ClampedSummary({
+  text,
+  children,
+}: {
+  text: string;
+  /** The confidence row. Rendered beside the expand control, never below it. */
+  children: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      /* scrollHeight is the full text; clientHeight is what the clamp
+         lets through. They differ only when something is actually cut. */
+      setClamped(el.scrollHeight - el.clientHeight > 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+    /* Re-measured when the text changes: the next finding's summary is a
+       different length and inherits nothing from this one. Expanding is
+       deliberately NOT a dependency — the paragraph is unclamped then, so
+       a measurement would read "nothing is cut" and hide the control that
+       collapses it again. */
+  }, [text]);
+
+  return (
+    <>
+      <p
+        ref={ref}
+        className={`mt-2 text-body text-ink-2 ${expanded ? "" : "line-clamp-2"}`}
+      >
+        {text}
+      </p>
+      <div className="mt-3 flex items-center justify-between gap-4">
+        {children}
+        {clamped ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((open) => !open)}
+            className="shrink-0 cursor-pointer rounded-sm text-caption text-ink-3 underline underline-offset-2 hover:text-ink focus-visible:shadow-selected focus-visible:outline-none"
+          >
+            {expanded ? "Show less" : "Show more"}
+          </button>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
 /**
  * Reports the document and page on screen to whoever owns the side panel.
  *

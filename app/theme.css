@@ -164,6 +164,14 @@
   --spacing-rail-min: 52px;   /* app nav, collapsed */
   --spacing-queue-min: 46px;  /* findings queue, collapsed to dots */
   --spacing-panel: 384px;     /* reasoning / extraction side panel */
+
+  /* The source document's FLOOR, not its height.
+     The pane takes whatever height the finding header and the evidence
+     leave it, which on a tall screen is most of the column. This is the
+     point below which it stops giving way and the column scrolls
+     instead — because a document pane squeezed under its own toolbar
+     is not a smaller document, it is no document.                     */
+  --spacing-doc-min: 560px;
 }
 
 /* ── light chrome + shadow colour ────────────────────────────
