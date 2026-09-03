@@ -40,6 +40,11 @@ good standing. Freedom Forever is one of the largest residential solar
 installers in the United States, providing national coverage and established
 installation crews across the portfolio's target markets.
 
+The expansion is underwritten on the federal investment tax credit at its
+current rate, which requires that qualifying property be placed in service by
+December 31, 2027. The schedule carries roughly nine months of headroom
+against that date.
+
 The installer-backed 25-year workmanship warranty covers the installed base,
 which we view as a meaningful mitigant to long-term operations and
 maintenance risk.
@@ -54,6 +59,7 @@ maintenance risk.
 | Installation partner | Freedom Forever LLC |
 | Master installation agreement | Executed January 2026 — in good standing |
 | Workmanship warranty | 25 years, installer-backed |
+| Federal tax credit — placed in service by | December 31, 2027 |
 
 ## 5. Risks and Mitigants
 

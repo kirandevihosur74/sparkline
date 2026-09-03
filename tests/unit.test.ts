@@ -201,7 +201,12 @@ test("adaptRun orders flags first by materiality and converts pages to 1-based",
   }
   assert.equal(run.review.claimCount, 5);
   assert.equal(run.review.flagCount, 2);
-  assert.equal(run.review.queryCount, 1, "two traces share one query");
+  /* Two live checks ran, so the count is two. This asserted 1 with the note
+     "two traces share one query" — pinning the undercount rather than the
+     behaviour: queryCount was a Set of query STRINGS, and the registry's two
+     counterparty claims share one. The screen was reporting half the work the
+     run did. */
+  assert.equal(run.review.queryCount, 2, "one per live check, not per string");
   assert.equal(run.review.documents[0].pageCount, 2);
   assert.equal(run.review.documents[0].claimCount, 3);
   assert.equal(run.events[1].timestamp, "1:06");

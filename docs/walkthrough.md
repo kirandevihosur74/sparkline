@@ -166,7 +166,7 @@ and one sentence states the arithmetic that relates them.
   `/reviews/demo-2026-08`, `/reviews/demo-2026-08/review`,
   `/reviews/demo-2026-08/audit`, `/reviews/demo-2026-08-degraded`,
   `/reviews/demo-2026-08-degraded/review`,
-  `/reviews/demo-2026-08-degraded/audit`, `/settings` — **all 200**.
+  `/reviews/demo-2026-08-degraded/audit` — **all 200**.
 - **Page scroll** — `documentElement` scroll overflow is `0 × 0` on every route
   at both 1560×940 and 1560×700, including mid-animation, with the sample
   bundle loaded, and after an approval. ✓
@@ -202,9 +202,6 @@ Screenshots taken as evidence: `i-nav.png`, `i-team.png`, `i-audit.png`,
 
 ### Observations, not defects
 
-- `/settings` exists as a route (200) but no nav row points at it; its header
-  falls back to the wordmark "Sparkline" because `navRouteName` has no entry.
-  It is unreachable by clicking, so no reader can land on it.
 - `/reviews/demo-2026-08-degraded/audit` lights the **Reviews** row and titles
   its header "Reviews" (the audit nav row's href is pinned to the demo run).
   The invariant "header = the nav row that lit up" still holds, and the page's

@@ -97,6 +97,34 @@ export const CLAIM_REGISTRY: ClaimDef[] = [
     externalQuery: "Freedom Forever solar Chapter 11 bankruptcy filing",
   },
   {
+    /*
+     * The SECOND external claim, and deliberately a different question from
+     * the counterparty pair — which share one query string between them, so
+     * two live checks were reporting as one.
+     *
+     * A tax-credit deadline is the right shape for this: it is a public fact
+     * the memo restates, nobody's private commercial term, and it moves. The
+     * query and its parse targets come from docs/serpapi-query-log.md §13.7,
+     * which recorded irs.gov top-1 with an answer box.
+     *
+     * UNVALIDATED as of writing — that same log says to confirm the exact
+     * wording before relying on it. `npm run queries:verify` is the check.
+     * Until then this degrades to UNVERIFIED, which is a true answer rather
+     * than a wrong one.
+     */
+    type: "ITC_DEADLINE",
+    label: "Federal tax credit eligibility",
+    strategy: "external",
+    materiality: "HIGH",
+    tableLabel: /tax credit|placed in service/i,
+    prosePatterns: [
+      /placed in service[^.]{0,80}?(December 31,? 20\d{2})/i,
+      /(investment tax credit)[^.]{0,80}?20\d{2}/i,
+    ],
+    parse: (raw) => ({ value: raw.trim() }),
+    externalQuery: "federal solar investment tax credit placed in service deadline",
+  },
+  {
     type: "WARRANTY",
     label: "Workmanship warranty",
     strategy: "human",
