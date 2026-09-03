@@ -30,6 +30,7 @@ export type {
   Finding,
   ReviewSummary,
   AuditRecord,
+  SignErrorResponse,
   SigningStep,
   SigningTimings,
   RejectReason,

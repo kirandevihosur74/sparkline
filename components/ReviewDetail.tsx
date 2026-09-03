@@ -41,6 +41,7 @@ import type {
   DecisionSignature,
   QueryTrace,
   RejectReason,
+  SigningStep,
 } from "@/lib/data";
 
 /**
@@ -127,6 +128,14 @@ export interface ReviewDetailProps {
   signing?: boolean;
   /** Why the last signature attempt failed, if it did. */
   signError?: string;
+  /**
+   * WHICH of the four signing steps broke, when the route named one.
+   *
+   * Passed through untouched: the chain is strictly sequential, so naming the
+   * failed step is also a true statement about the ones before it (they ran)
+   * and the ones after (they did not).
+   */
+  signErrorStep?: SigningStep;
   onApprove: (findingId: string) => void;
   onReject: (findingId: string, reason: RejectReason) => void;
   onUndo: (findingId: string) => void;
@@ -208,6 +217,7 @@ export default function ReviewDetail({
   record,
   signing,
   signError,
+  signErrorStep,
   onApprove,
   onReject,
   onUndo,
@@ -350,6 +360,7 @@ export default function ReviewDetail({
         record={record}
         signing={signing}
         signError={signError}
+        signErrorStep={signErrorStep}
         onApprove={onApprove}
         onReject={onReject}
         onUndo={onUndo}

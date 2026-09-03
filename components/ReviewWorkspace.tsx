@@ -78,6 +78,8 @@ import type {
   FlagStatus,
   QueryTrace,
   RejectReason,
+  SignErrorResponse,
+  SigningStep,
 } from "@/lib/data";
 
 /**
@@ -135,6 +137,23 @@ export interface ReviewWorkspaceProps {
   reviewer?: string;
 }
 
+/**
+ * A signing failure that remembers WHICH STEP broke.
+ *
+ * `throw new Error(body.error)` was what dropped the step: the route sends it
+ * as a field beside the message precisely so the UI does not have to read
+ * structure out of prose, and rebuilding an Error from the message alone threw
+ * that structure away again.
+ */
+class SigningFailure extends Error {
+  readonly step?: SigningStep;
+  constructor(message: string, step?: SigningStep) {
+    super(message);
+    this.name = "SigningFailure";
+    this.step = step;
+  }
+}
+
 export default function ReviewWorkspace({
   reviewId,
   findings,
@@ -150,7 +169,20 @@ export default function ReviewWorkspace({
   const [decisions, setDecisions] = useState<Record<string, SessionDecision>>(
     {},
   );
-  const [signError, setSignError] = useState<Record<string, string>>({});
+  /**
+   * Why the last signature attempt failed, and WHICH OF THE FOUR STEPS broke.
+   *
+   * The step used to be thrown away here: the catch built an Error out of the
+   * message alone, so the field the sign route genuinely sends was discarded
+   * one line after arriving and the decision bar had to say the response did
+   * not name a step. It does name one — signing with no API key answers
+   * `{"error": "...", "step": "convert"}` — and a reviewer being told the
+   * document was converted but could not be signed is a different, more
+   * useful sentence than "signing failed".
+   */
+  const [signError, setSignError] = useState<
+    Record<string, { message: string; step?: SigningStep }>
+  >({});
   const [selectedId, setSelectedId] = useState<string | undefined>(
     // Open on the first finding still waiting on a human; if the run is fully
     // resolved, on the first finding there is.
@@ -349,7 +381,16 @@ export default function ReviewWorkspace({
       decision: Exclude<FlagStatus, "open">,
       reason?: RejectReason,
     ) => {
-      setSignError((current) => ({ ...current, [findingId]: "" }));
+      /* Clear by REMOVING the entry. It used to be set to an empty string,
+         which the old `|| undefined` read downstream turned back into "no
+         error"; with a shape of its own, an empty entry would be an error
+         object claiming a failure with no message. */
+      setSignError((current) => {
+        if (!(findingId in current)) return current;
+        const next = { ...current };
+        delete next[findingId];
+        return next;
+      });
       setDecisions((current) => ({
         ...current,
         [findingId]: { decision, pending: true },
@@ -366,23 +407,33 @@ export default function ReviewWorkspace({
             reviewer: signer,
           }),
         });
-        const body = (await response.json()) as {
+        const body = (await response.json()) as SignErrorResponse & {
           record?: AuditRecord;
-          error?: string;
         };
         if (!response.ok || !body.record) {
-          throw new Error(body.error ?? `Signing failed (HTTP ${response.status}).`);
+          /* Thrown as a value, not an Error: an Error carries a message and
+             nothing else, and the step would not survive the throw. */
+          throw new SigningFailure(
+            body.error ?? `Signing failed (HTTP ${response.status}).`,
+            body.step,
+          );
         }
         setDecisions((current) => ({
           ...current,
           [findingId]: { decision, pending: false, record: body.record },
         }));
       } catch (cause) {
-        // The finding stays open; the bar says why.
+        // The finding stays open; the bar says why, and which step.
         setDecisions((current) => ({ ...current, [findingId]: null }));
         setSignError((current) => ({
           ...current,
-          [findingId]: cause instanceof Error ? cause.message : String(cause),
+          [findingId]:
+            cause instanceof SigningFailure
+              ? { message: cause.message, step: cause.step }
+              : {
+                  message:
+                    cause instanceof Error ? cause.message : String(cause),
+                },
         }));
       }
     },
@@ -733,7 +784,12 @@ export default function ReviewWorkspace({
               signError={
                 selectedDecision === undefined
                   ? undefined
-                  : signError[selected.id] || undefined
+                  : signError[selected.id]?.message
+              }
+              signErrorStep={
+                selectedDecision === undefined
+                  ? undefined
+                  : signError[selected.id]?.step
               }
               onApprove={handleApprove}
               onReject={handleReject}

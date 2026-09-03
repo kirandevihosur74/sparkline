@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * AuditLedger — screen 6 of DESIGN_SYSTEM.md: the signed record of every human
  * decision in one run, and the analysis runs that produced what was decided.
@@ -58,9 +60,21 @@
  *
  * HONESTY, which is most of this screen:
  *   - `contentHash` on a REAL signature is the SHA-256 of the signed PDF
- *     bytes ("sha256:" prefix) that POST /api/sign returned. On the committed
- *     fixture rows it is still a placeholder, and the "fixture-sha256:" prefix
- *     is rendered rather than trimmed away so the two can never be confused.
+ *     BYTES ("sha256:" prefix) that POST /api/sign returned — read
+ *     lib/runs/records.ts: the record is rendered to PDF, the PDF is signed,
+ *     and the digest is taken over the SIGNED bytes, in that order. On the
+ *     committed fixture rows it is a placeholder that nothing computed, and
+ *     the "fixture-sha256:" prefix is rendered rather than trimmed away so
+ *     the two can never be confused. The prefix alone is a subtle mark on a
+ *     column of monospace, so each digest is also LABELLED — "Signed PDF" on
+ *     a neutral chip, "Placeholder" on a warn chip — and a placeholder's
+ *     digest is drawn muted while a real one is drawn at full ink. See
+ *     RecordHash: four signals, none of them colour alone.
+ *   - `timings` is shown WHERE IT EXISTS and nowhere else. It is measured
+ *     server-side while a record is signed, so no fixture row has it and no
+ *     row may be given a duration this build did not measure. A row without
+ *     one says nothing at all; the footnote carries the general statement
+ *     once, for the whole ledger.
  *   - `signedDocumentUrl` is a link when the app serves the PDF
  *     (/api/records/…) and a recorded path otherwise. When the field is absent
  *     the row says so instead of leaving a blank cell.
@@ -83,11 +97,31 @@
  *
  * Shadow discipline: exactly ONE element on this screen carries shadow-action —
  * the header link into the review, which is the only thing a reader of the
- * ledger can act on. Nothing else on the screen has a shadow.
+ * ledger can act on. The per-row copy button is a bordered `surface` control
+ * and takes NO shadow; its focus ring is `shadow-selected`, which the design
+ * system names as the 1px ink selection ring and not the action shadow.
  *
- * Server component — it renders props and holds no state.
+ * CLIENT COMPONENT, and only because of one control.
+ *
+ * A hash a reviewer is invited to recompute has to be liftable off the screen,
+ * and dragging 64 monospace characters out of a table cell is not an
+ * affordance — so every digest carries a copy button, and writing to the
+ * clipboard needs JavaScript. `"use client"` is a MODULE directive: a file is
+ * client or server, never both, so the button cannot be split into an island
+ * without a SECOND FILE, which this change is not allowed to add. The whole
+ * component is therefore client-rendered.
+ *
+ * What that costs, checked rather than assumed: nothing this route was not
+ * already paying for. ContextBar in app/(app)/layout.tsx is itself a client
+ * component and imports getReview/getRunHistory from "@/lib/data", so
+ * lib/data/fixtures.ts sits in this route's client graph before AuditLedger
+ * says a word. The marginal cost is this file's own markup plus hydrating a
+ * table of at most a dozen rows. If the ledger ever holds hundreds of rows,
+ * the fix is to move the copy control into its own file and hand this one back
+ * to the server — not to keep a large table hydrating for one button.
  */
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getComplianceCopy, getRecordActor } from "@/lib/data";
 import type {
@@ -222,6 +256,215 @@ const ROLE_TINT: Record<ActorRole, string> = {
 
 /** An unresolved signer: tinted like a neutral role, but with nothing to show. */
 const UNATTRIBUTED_TINT = "bg-canvas text-ink-3";
+
+/**
+ * THE TWO PREFIXES, and the difference between them — which is the difference
+ * between a record and a prop.
+ *
+ * A "sha256:" digest is a real SHA-256 taken over the signed PDF's bytes:
+ * lib/runs/records.ts renders the record to PDF, hands it to Nutrient DWS to
+ * sign, and hashes the bytes that come back. A "fixture-sha256:" digest is a
+ * committed placeholder — sixteen hex characters somebody typed — and nothing
+ * signed it, nothing computed it, and no file will ever match it.
+ *
+ * Rendering the prefix in a dimmer tint (which is all this column used to do)
+ * states the difference and does not SHOW it: at a glance a column of
+ * monospace looks like a column of monospace. Four signals now separate them,
+ * and no single one of them is colour:
+ *
+ *   1. A LABELLED CHIP above the digest — the word "Placeholder" or the words
+ *      "Signed PDF". Colour never carries meaning alone, so the word is the
+ *      meaning and the tint only reinforces it.
+ *   2. The chip's TINT: `warn` on a placeholder, which is exactly what the
+ *      token means (caution / degraded / not to be relied on) and is the same
+ *      treatment ClaimsTable gives a row held back from comparison. `line` on
+ *      a real digest — no tint at all, because a real digest is the normal
+ *      case and needs no warning.
+ *   3. The DIGEST'S OWN WEIGHT of ink: a real digest is drawn in `ink`,
+ *      full strength, because something stands behind it; a placeholder is
+ *      drawn in `ink-3` throughout, because nothing does.
+ *   4. LENGTH, which the data supplies for free: 64 hex characters against
+ *      16. A real digest wraps to three lines in this column and a fixture one
+ *      does not, so the column's shape says it before any word is read.
+ *
+ * `alert` was the other candidate for the placeholder chip and is wrong: it
+ * means conflict/failure, and it is the colour this table already spends on a
+ * REJECTED decision. An unsigned digest is neither a failure nor a rejection.
+ */
+const SIGNED_PREFIX = "sha256:";
+const FIXTURE_PREFIX = "fixture-sha256:";
+
+/**
+ * What a digest's prefix says it is. "unrecognized" is a real third case, not
+ * a fallback for tidiness: a ledger row carrying a digest in neither shape is
+ * one this build cannot describe, and it says so rather than promoting it to
+ * a signature or demoting it to a placeholder.
+ */
+type HashOrigin = "signed" | "placeholder" | "unrecognized";
+
+const HASH_ORIGIN: Record<
+  HashOrigin,
+  { chip: string; chipTone: string; digest: string; prefixMuted: boolean }
+> = {
+  signed: {
+    chip: "Signed PDF",
+    chipTone: "border-line text-ink-3",
+    digest: "text-ink",
+    // The qualifier is not the digest, so it stays a step back from it.
+    prefixMuted: true,
+  },
+  placeholder: {
+    chip: "Placeholder",
+    chipTone: "border-warn-line bg-warn-soft text-warn",
+    digest: "text-ink-3",
+    // Already muted end to end: a second, dimmer tint inside it would only
+    // cost the prefix its legibility, and the prefix is the thing being said.
+    prefixMuted: false,
+  },
+  unrecognized: {
+    chip: "Unrecognized prefix",
+    chipTone: "border-line text-ink-3",
+    digest: "text-ink-2",
+    prefixMuted: false,
+  },
+};
+
+function hashOrigin(value: string): HashOrigin {
+  if (value.startsWith(FIXTURE_PREFIX)) return "placeholder";
+  if (value.startsWith(SIGNED_PREFIX)) return "signed";
+  return "unrecognized";
+}
+
+/** The copy control's three states. Every one of them is a word on screen. */
+type CopyState = "idle" | "copied" | "failed";
+
+/**
+ * Copy copy. The failure state SAYS it failed and names what to do instead —
+ * a clipboard write rejects on a permissions refusal and is not available at
+ * all outside a secure context, and a control that quietly did nothing while
+ * reading "Copy hash" would be a lie on an audit trail.
+ */
+const COPY_LABEL: Record<CopyState, string> = {
+  idle: "Copy hash",
+  copied: "Hash copied",
+  failed: "Copy failed — select it",
+};
+
+/** What a screen reader is told, since the button's own label is terse. */
+const COPY_ANNOUNCEMENT: Record<CopyState, string> = {
+  idle: "",
+  // Never the digest itself: 64 hex characters read out one by one is not an
+  // announcement, it is a punishment.
+  copied: "The full record hash, prefix included, is on the clipboard.",
+  failed:
+    "The record hash could not be copied. Select it in the table and copy it yourself.",
+};
+
+/** How long a confirmation stands before the button returns to its verb. */
+const COPY_RESET_MS = 2400;
+
+/**
+ * THE SIGNING CHAIN — what producing this record actually cost, where anyone
+ * measured it.
+ *
+ * The shape is `SigningTimings` in lib/types.ts, re-exported through
+ * lib/data/types.ts and reached here off the record itself
+ * (`AuditRecord["timings"]`) rather than by name: lib/data/index.ts — the one
+ * surface components import types from — does not re-export `SigningTimings`
+ * yet, and deriving the alias from the field keeps this file on that single
+ * import surface instead of declaring a second copy of a type it does not own.
+ * Swap it for a plain import the moment lib/data/index.ts carries the name.
+ *
+ * It is OPTIONAL and stays optional. signDecision() measures these four steps
+ * while it runs, so a record has them only if this build signed it: every
+ * fixture row lacks them, and so does any row written before the chain was
+ * instrumented. A row with no chain renders NOTHING — no dash, no "not
+ * recorded", no zero. The absence is stated once, in the footnote, for the
+ * whole ledger; saying it in every row would turn the common case into an
+ * apology and bury the rows that do carry a measurement.
+ */
+type SigningTimings = NonNullable<AuditRecord["timings"]>;
+
+/**
+ * The four steps in the order signDecision() runs them, each named as the
+ * ledger says it. Read off the record — no step is inferred, and the list is
+ * exhaustive over the measured fields so a fifth one cannot be forgotten.
+ */
+const SIGNING_STEPS: readonly {
+  term: string;
+  read: (timings: SigningTimings) => number;
+}[] = [
+  { term: "Convert", read: (t) => t.convertMs },
+  { term: "Sign", read: (t) => t.signMs },
+  { term: "Hash", read: (t) => t.hashMs },
+  { term: "Store", read: (t) => t.storeMs },
+];
+
+interface SigningChain {
+  steps: readonly { term: string; ms: number }[];
+  /** Measured end to end, INDEPENDENTLY of the four steps — never their sum. */
+  totalMs: number;
+  /**
+   * `totalMs` minus the four steps: the time the chain spent somewhere no step
+   * claimed. Positive is the ordinary case and worth seeing. Negative would
+   * mean the parts outweigh the whole, which is a contradiction the row states
+   * rather than hides.
+   */
+  unattributedMs: number;
+}
+
+/**
+ * The record's chain, or undefined — and undefined for a record whose numbers
+ * are not durations. A NaN or a negative millisecond is not a measurement, and
+ * an audit trail is the last place to print a figure that nothing measured, so
+ * such a chain is dropped whole instead of being rendered in part.
+ */
+function signingChain(record: AuditRecord): SigningChain | undefined {
+  const timings = record.timings;
+  if (!timings) return undefined;
+
+  const steps = SIGNING_STEPS.map((step) => ({
+    term: step.term,
+    ms: step.read(timings),
+  }));
+
+  const measured = [...steps.map((step) => step.ms), timings.totalMs];
+  if (measured.some((ms) => !Number.isFinite(ms) || ms < 0)) return undefined;
+
+  const summed = steps.reduce((total, step) => total + step.ms, 0);
+
+  return {
+    steps,
+    totalMs: timings.totalMs,
+    unattributedMs: timings.totalMs - summed,
+  };
+}
+
+/** "Convert 812 ms · Sign 1204 ms · Hash 3 ms · Store 6 ms". */
+function chainStepsText(chain: SigningChain): string {
+  return chain.steps.map((step) => `${step.term} ${step.ms} ms`).join(" · ");
+}
+
+/**
+ * The line beneath the steps: the measured total, and what it does not
+ * account for. The remainder is the whole reason the total is measured rather
+ * than summed — it is the overhead between the steps, and it only exists as a
+ * number because nobody defined the total as the sum of its parts.
+ */
+function chainTotalText(chain: SigningChain): string {
+  const total = `${chain.totalMs} ms end to end, measured`;
+
+  if (chain.unattributedMs > 0) {
+    return `${total} · ${chain.unattributedMs} ms of it attributed to no step`;
+  }
+
+  if (chain.unattributedMs < 0) {
+    // The system says what it does not know.
+    return `${total} · the four steps add to more than that, so one of the five numbers is wrong`;
+  }
+
+  return `${total} · every millisecond of it attributed to a step`;
+}
 
 /**
  * Deterministic UTC rendering, split into date and time so the two stack in a
@@ -443,6 +686,13 @@ export default function AuditLedger({
   const rejected = decisions.length - approved;
   const countersigned = signed.length - decisions.length;
 
+  // Rows carrying a measured signing chain, counted off the rows themselves so
+  // the footnote explains what is on screen and never describes something that
+  // is not. Zero is the ordinary case on a committed ledger.
+  const chained = signed.filter(
+    (record) => signingChain(record) !== undefined,
+  ).length;
+
   const summary = summaryLine(signed);
   // Suppressed entirely on the decisions-only prop path: a component that was
   // never handed runs may not report how many there were. See toRows().
@@ -623,7 +873,11 @@ export default function AuditLedger({
             })}
           </table>
 
-          <Footnotes runs={runs.length} />
+          <Footnotes
+            runs={runs.length}
+            chains={chained}
+            signed={signed.length}
+          />
         </div>
       )}
     </section>
@@ -655,6 +909,18 @@ function LedgerRows({
   const signedAt = formatSignedAt(record.signedAt);
   const reason = record.reason ? REJECT_REASON[record.reason] : undefined;
   const countersigns = record.countersigns;
+
+  // Present only on a record this build actually signed and measured.
+  const chain = signingChain(record);
+
+  // Which row's hash the copy button belongs to, for a reader who cannot see
+  // the column it sits in. The claim alone repeats across a countersignature
+  // and its decision, so the signing instant goes in too and the two buttons
+  // stop sharing a name.
+  const claim = humanizeField(record.claimField);
+  const hashLabel = signedAt
+    ? `${claim}, signed ${signedAt.date} ${signedAt.time}`
+    : claim;
 
   // When this row endorses another, the instant it endorses — printed so the
   // reader can match it against the Signed column of the row above.
@@ -754,8 +1020,8 @@ function LedgerRows({
         </Cell>
 
         <Cell tight={grouped} className={rule}>
-          <Hash value={record.contentHash} />
-          <span className="mt-1 block text-caption text-ink-3">
+          <RecordHash value={record.contentHash} label={hashLabel} />
+          <span className="mt-1.5 block text-caption text-ink-3">
             {record.signedDocumentUrl?.startsWith("/api/records/") ? (
               <a
                 href={record.signedDocumentUrl}
@@ -781,11 +1047,34 @@ function LedgerRows({
 
       {record.note ? (
         <tr>
-          <td colSpan={COLUMNS} className="px-4 pb-3.5 align-top">
+          <td
+            colSpan={COLUMNS}
+            className={`px-4 align-top ${chain ? "pb-2.5" : "pb-3.5"}`}
+          >
             <p className="text-micro uppercase text-ink-3">
               Reviewer&rsquo;s note
             </p>
             <p className="mt-1 text-body text-ink-2">{record.note}</p>
+          </td>
+        </tr>
+      ) : null}
+
+      {/* THE SIGNING CHAIN, on the rows that have one and nowhere else. It is
+          given the full width rather than a fourth line in the narrow hash
+          column, and it sits last because it is how the record was produced —
+          mechanical detail beneath the reviewer's own words, never above
+          them. Every number is read off `timings`; nothing here is summed,
+          averaged or converted into a friendlier unit. */}
+      {chain ? (
+        <tr>
+          <td colSpan={COLUMNS} className="px-4 pb-3.5 align-top">
+            <p className="text-micro uppercase text-ink-3">Signing chain</p>
+            <p className="tabular mt-1 text-caption text-ink-2">
+              {chainStepsText(chain)}
+            </p>
+            <p className="tabular mt-0.5 text-caption text-ink-3">
+              {chainTotalText(chain)}
+            </p>
           </td>
         </tr>
       ) : null}
@@ -992,25 +1281,125 @@ function NothingSignedRow({ open }: { open: number }) {
 }
 
 /**
- * The hash, rendered so it cannot be mistaken for a digest: the
- * "fixture-sha256:" qualifier stays on screen in muted text, ahead of the value
- * it disqualifies.
+ * THE RECORD HASH: what it is, the whole of it, and a way to take it with you.
+ *
+ * Three parts, in reading order:
+ *
+ *   - the CHIP, which says in words whether this digest was computed over a
+ *     signed PDF or typed into a fixture (see HASH_ORIGIN for why the word
+ *     leads and the tint only follows);
+ *   - the DIGEST ITSELF, never truncated and never trimmed of its prefix — a
+ *     hash a reader cannot see in full is a hash they cannot check, and the
+ *     prefix is the half that says what it is;
+ *   - the COPY BUTTON, because "recompute it over the file" is an instruction
+ *     nobody can follow while the digest is trapped in a table cell.
  */
-function Hash({ value }: { value: string }) {
+function RecordHash({ value, label }: { value: string; label: string }) {
+  const origin = hashOrigin(value);
+  const style = HASH_ORIGIN[origin];
   const separator = value.indexOf(":");
 
-  if (separator < 0) {
-    return (
-      <span className="tabular block font-mono text-caption break-all text-ink">
-        {value}
+  return (
+    <>
+      {/* Inline chip: 3px radius and a 1px border, the system's chip. */}
+      <span
+        className={`inline-block rounded-sm border px-1.5 py-0.5 text-micro uppercase ${style.chipTone}`}
+      >
+        {style.chip}
       </span>
-    );
-  }
+
+      <span
+        className={`tabular mt-1 block font-mono text-caption break-all ${style.digest}`}
+      >
+        {separator < 0 ? (
+          value
+        ) : (
+          <>
+            <span className={style.prefixMuted ? "text-ink-3" : undefined}>
+              {value.slice(0, separator + 1)}
+            </span>
+            {value.slice(separator + 1)}
+          </>
+        )}
+      </span>
+
+      <CopyHash value={value} label={label} />
+    </>
+  );
+}
+
+/**
+ * The copy control — one per digest, and the only interactive thing on this
+ * screen besides the header link.
+ *
+ * It copies `contentHash` VERBATIM, prefix included. Trimming "fixture-sha256:"
+ * on the way to the clipboard would hand the reader a bare sixteen characters
+ * that look exactly like a digest and are not one; trimming "sha256:" would
+ * hand them something that no longer says what it is a hash of. What the row
+ * shows is what the clipboard gets.
+ *
+ * Both failure modes are real and both are stated. `navigator.clipboard` does
+ * not exist outside a secure context, and `writeText` rejects when the
+ * permission is refused — in either case the button says the copy failed and
+ * names the fallback, rather than flashing a confirmation for something that
+ * never happened.
+ */
+function CopyHash({ value, label }: { value: string; label: string }) {
+  const [state, setState] = useState<CopyState>("idle");
+
+  // The confirmation is a transient state, not a new resting one: the button
+  // goes back to naming its verb so the next row's reader is not told about
+  // the last row's copy.
+  useEffect(() => {
+    if (state === "idle") return;
+    const timer = setTimeout(() => setState("idle"), COPY_RESET_MS);
+    return () => clearTimeout(timer);
+  }, [state]);
+
+  const tone =
+    state === "copied"
+      ? "text-accent"
+      : state === "failed"
+        ? "text-alert"
+        : "text-ink-2 hover:text-ink";
 
   return (
-    <span className="tabular block font-mono text-caption break-all">
-      <span className="text-ink-3">{value.slice(0, separator + 1)}</span>
-      <span className="text-ink">{value.slice(separator + 1)}</span>
+    // `relative` is load-bearing, not decoration. The live region below is
+    // `sr-only`, which is `position: absolute`; with no positioned ancestor its
+    // containing block is the page itself, so it sits OUTSIDE the ledger's
+    // scroll column, is not clipped by it, and extends the document past the
+    // viewport — the page starts scrolling as a page, which this app never
+    // does. Positioning the wrapper puts the containing block back inside the
+    // scroll column, where it is clipped like everything else.
+    <span className="relative mt-1.5 block">
+      <button
+        type="button"
+        aria-label={`Copy the full record hash for ${label}`}
+        onClick={() => {
+          const clipboard = navigator.clipboard;
+          if (!clipboard) {
+            setState("failed");
+            return;
+          }
+          try {
+            clipboard.writeText(value).then(
+              () => setState("copied"),
+              () => setState("failed"),
+            );
+          } catch {
+            setState("failed");
+          }
+        }}
+        className={`rounded border border-line bg-surface px-2 py-1 text-micro font-medium focus-visible:shadow-selected focus-visible:outline-none ${tone}`}
+      >
+        {COPY_LABEL[state]}
+      </button>
+
+      {/* The label change alone is not announced, so the outcome is said out
+          loud once, politely, and without spelling the digest. */}
+      <span role="status" className="sr-only">
+        {COPY_ANNOUNCEMENT[state]}
+      </span>
     </span>
   );
 }
@@ -1112,6 +1501,20 @@ function EmptyLedger({ open }: { open: number }) {
  * "fixture-sha256:" placeholder and a path with nothing behind it. The prefix
  * is what tells them apart, and it is rendered rather than trimmed.
  *
+ * WHAT THE HASH IS COMPUTED OVER is stated here, once, and it is checked
+ * against the code rather than remembered: lib/runs/records.ts renders the
+ * record to Markdown, converts it to a PDF, hands that PDF to Nutrient DWS to
+ * sign, and only then takes `createHash("sha256").update(signed)` over the
+ * bytes that came back. So the digest is of the SIGNED FILE — not of the
+ * Markdown it was rendered from, and not of any JSON representation of the
+ * row. That is the difference between a hash a reviewer can check against a
+ * downloaded PDF and one they cannot.
+ *
+ * The signing-chain sentence is the one general statement about `timings`, and
+ * it is said here rather than in the rows: on a ledger of fixtures every row
+ * lacks a chain, and a per-row "not measured" would be four apologies for one
+ * fact.
+ *
  * Beneath them, the retention line: workspace POLICY, read verbatim from
  * getComplianceCopy(). It is set apart by a rule and labelled as policy
  * precisely because this build implements none of it — it states what the
@@ -1120,7 +1523,18 @@ function EmptyLedger({ open }: { open: number }) {
  * TODO(schema-gap: retention): nothing in lib/types.ts models retention,
  * immutability or export; the sentence is fixture copy.
  */
-function Footnotes({ runs = 0 }: { runs?: number }) {
+function Footnotes({
+  runs = 0,
+  chains = 0,
+  signed = 0,
+}: {
+  /** Run rows on screen — the shaded-ground note is for them. */
+  runs?: number;
+  /** Rows showing a measured signing chain. */
+  chains?: number;
+  /** Signed rows in total, so the chain sentence can be aimed correctly. */
+  signed?: number;
+}) {
   const { auditRetention } = getComplianceCopy();
 
   return (
@@ -1136,12 +1550,44 @@ function Footnotes({ runs = 0 }: { runs?: number }) {
           </li>
         ) : null}
         <li className="text-caption text-ink-3">
-          A <span className="font-mono">sha256:</span> hash is the digest of the
-          PDF that {SIGNING_PROVIDER} signed for that decision — recompute it
-          over the file to check the row. A{" "}
-          <span className="font-mono">fixture-sha256:</span> prefix marks a
-          committed placeholder that was never signed.
+          A row marked <span className="text-ink-2">Signed PDF</span> carries a{" "}
+          <span className="font-mono">sha256:</span> hash, and that hash is
+          computed over the SIGNED PDF&rsquo;S BYTES — the file exactly as it
+          stands after {SIGNING_PROVIDER} applied the signature, not the
+          Markdown the record was rendered from and not a JSON copy of this
+          row. Download the PDF the row links to, take SHA-256 of the file, and
+          the two must match character for character; that is the whole check.
         </li>
+        <li className="text-caption text-ink-3">
+          A row marked <span className="text-ink-2">Placeholder</span> carries a
+          committed <span className="font-mono">fixture-sha256:</span> stand-in
+          instead. Nothing signed it, nothing computed it, and no file will ever
+          match it — it is sixteen characters standing where a digest will go.
+        </li>
+        <li className="text-caption text-ink-3">
+          &ldquo;Copy hash&rdquo; puts the digest on the clipboard exactly as
+          the row shows it, prefix and all, so what you paste still says which
+          of the two it is.
+        </li>
+        {/* Said once, about `timings`, and only in the form the ledger on
+            screen can support. */}
+        {chains > 0 ? (
+          <li className="text-caption text-ink-3">
+            A signing chain is measured server-side while the record is signed:
+            convert and sign are {SIGNING_PROVIDER} calls, the hash and the
+            write to disk are local, and the end-to-end total is timed
+            separately from the four — which is why it is not their sum, and
+            why the difference is time no step claimed. Rows without a chain
+            were never measured.
+          </li>
+        ) : signed > 0 ? (
+          <li className="text-caption text-ink-3">
+            No row here carries a signing chain: the four durations are
+            measured only while this app signs a record, so a committed row was
+            never timed and a row signed before the chain was instrumented
+            recorded nothing.
+          </li>
+        ) : null}
         <li className="text-caption text-ink-3">
           &ldquo;Open signed PDF&rdquo; serves the signed record from this app.
           A record path without a link is a fixture entry with no file behind
