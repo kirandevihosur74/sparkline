@@ -784,7 +784,12 @@ function DocumentPane({
           {/* The boxes. Selection is the finding on screen, so the box around
               its claim is the heavier one, and clicking any other box moves
               the whole screen to that finding. */}
-          <div className="scroll-col min-h-0 flex-1">
+          {/* NOT `.scroll-col`: the overlay scrolls its own canvas now, and a
+              scroller here was measured inert. It is also the better of the
+              two — with the canvas scrolling, the bordered ground and its
+              frame stay put while the paper moves inside them, instead of the
+              whole framed canvas sliding out of the pane. */}
+          <div className="min-h-0 flex-1">
             <ClaimBoxOverlay
               page={facsimile}
               selectedFindingId={findingId}

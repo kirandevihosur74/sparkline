@@ -24,7 +24,7 @@ import { useThemeStamp } from "./ThemeToggle";
  * ── HOW TALL THIS IS, AND WHO DECIDES ───────────────────────────────────────
  *
  * The parent decides; this component only refuses to disappear. The shell is
- * `flex-1 h-full min-h-[320px]`, which is three answers to three parents:
+ * `flex-1 h-full min-h-doc-floor`, which is three answers to three parents:
  *
  *   · a flex COLUMN pane with a resolved height — `flex-1` takes whatever is
  *     left after the toolbar and the claim strip, so the document is as tall
@@ -370,7 +370,7 @@ export default function ViewerEmbed({
        instead, and the floor is the last resort so the viewer is never a slit.
        `min-h-0` is deliberately absent: it would let a flex parent with no
        resolved height collapse this to nothing. */
-    <div className="relative h-full min-h-[320px] w-full flex-1 overflow-hidden rounded border border-line bg-surface">
+    <div className="relative h-full min-h-doc-floor w-full flex-1 overflow-hidden rounded border border-line bg-surface">
       <div ref={containerRef} className="absolute inset-0" />
       {!ready && !error && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

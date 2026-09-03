@@ -72,7 +72,7 @@ import type {
  * type scale, as does the ring geometry below. Both are stated once here
  * because theme.css is owned elsewhere; move them the moment it is opened.
  */
-const DOCUMENT_LINE_HEIGHT = 1.85;
+const DOCUMENT_LINE_HEIGHT = "var(--leading-doc)";
 
 /**
  * The document's type size, and the sheet's width. One decision, two numbers.
@@ -118,8 +118,8 @@ const DOCUMENT_LINE_HEIGHT = 1.85;
  * quoting paper — and it currently borrows a UI step because the scale has no
  * step of its own to lend it.
  */
-const DOCUMENT_FONT_SIZE = "var(--text-title)";
-const SHEET_MAX_WIDTH_PX = 720;
+const DOCUMENT_FONT_SIZE = "var(--text-doc)";
+const SHEET_MAX_WIDTH = "var(--sheet-width)";
 
 /**
  * Ring geometry, in px.
@@ -231,13 +231,13 @@ export default function ClaimBoxOverlay({
 }: ClaimBoxOverlayProps) {
   return (
     /* THE CANVAS the sheet sits on, and the pane's scroll container. `flex-1 /
-       h-full / min-h-[320px]` is the same three-parent answer ViewerEmbed's
+       h-full / min-h-doc-floor` is the same three-parent answer ViewerEmbed's
        shell gives, in the same order and with the same floor, so switching
        between the two views of the page does not change the height of the
        pane. `items-start` rather than the default stretch: a stretched sheet
        would be exactly the pane's height and its words would spill out the
        bottom of their own paper. */
-    <div className="flex h-full min-h-[320px] w-full flex-1 items-start justify-center overflow-y-auto rounded border border-line bg-canvas p-4">
+    <div className="flex h-full min-h-doc-floor w-full flex-1 items-start justify-center overflow-y-auto rounded border border-line bg-canvas p-4">
       <article
         aria-label={page.label}
         className="min-h-full w-full bg-surface px-8 py-7 font-serif text-ink-2 shadow-paper sm:px-16 sm:py-14"
@@ -246,7 +246,7 @@ export default function ClaimBoxOverlay({
              to leave room for a label in the line above the box. */
           lineHeight: DOCUMENT_LINE_HEIGHT,
           fontSize: DOCUMENT_FONT_SIZE,
-          maxWidth: `${SHEET_MAX_WIDTH_PX}px`,
+          maxWidth: SHEET_MAX_WIDTH,
         }}
       >
         {page.blocks.map((block, blockIndex) => (

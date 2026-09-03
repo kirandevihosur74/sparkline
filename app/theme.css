@@ -172,6 +172,38 @@
      instead — because a document pane squeezed under its own toolbar
      is not a smaller document, it is no document.                     */
   --spacing-doc-min: 560px;
+
+  /* The pane's own floor, strictly BELOW --spacing-doc-min so the two can
+     never argue. It binds only if the pane is ever shorter than the chrome
+     around it.                                                          */
+  --spacing-doc-floor: 320px;
+}
+
+/* ── the document sheet ──────────────────────────────────────
+   The marked-text facsimile is a PAGE, not UI, so it does not
+   take its type off the UI scale — it only used to because
+   there was nowhere else to take it from.
+
+   15.5px is measured, not chosen: at the old 12.5px the sheet
+   could not both fill the column and stay readable (80 cpl
+   caps it near 660px and still leaves ~28% of the column
+   empty). It also has to agree with the OTHER view of the same
+   page — a letter page at fit-to-width across this column is
+   scaled ~1.47x, putting 11pt body copy on screen near 16px —
+   and a facsimile that redrew the same page smaller would
+   shrink the evidence on the way between the two tabs.
+
+   720px is the widest sheet still inside the 45–75 character
+   band on average (66 avg, 78 max at this size). 760 gives 86
+   at the maximum, 800 gives 89, uncapped gives 99.
+
+   Leading is unitless so it scales with the size: the gap
+   between line boxes grew 10.6px -> 13.2px, which is more room
+   for a claim's label, not less.                             */
+@theme {
+  --text-doc: 15.5px;
+  --leading-doc: 1.85;
+  --sheet-width: 720px;
 }
 
 /* ── light chrome + shadow colour ────────────────────────────
