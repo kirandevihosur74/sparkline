@@ -1,9 +1,11 @@
 /**
  * EvidenceFaceoff — DESIGN_SYSTEM.md item 4.
  *
- * Three-column strip: document side · gap · comparison side. Each side carries
+ * Three-cell strip: document side · gap · comparison side. Each side carries
  * a source label with a PROVIDER TAG, one large tabular value, and a note; the
- * gap column carries the delta.
+ * gap cell carries the delta. Side by side while the strip is wide enough for
+ * the comparison to read across, stacked in the same order once it is not —
+ * decided by a CONTAINER query on the strip itself, see Strip.
  *
  * Both sides come off ONE finding — never off two separately-passed props:
  *
@@ -182,7 +184,53 @@ export function StalenessFaceoff({
 // Pieces
 // ---------------------------------------------------------------------------
 
-/** The bordered three-column shell. Dividers are the standard 1px line. */
+/**
+ * The bordered shell.
+ *
+ * TWO LAYOUTS, ONE MEASUREMENT. The strip is a NAMED CONTAINER (`faceoff`) and
+ * every responsive decision below is a container query against its own inline
+ * size — never a viewport breakpoint. That is not a stylistic preference: the
+ * strip's width is set by three states the viewport knows nothing about — the
+ * reasoning panel being open, the findings queue being collapsed, and the nav
+ * rail being collapsed. A `md:` breakpoint would stack a 900px-wide strip and
+ * leave a 400px one side-by-side. The container sees the width that exists.
+ *
+ * Wide (>= 480px): document · delta · comparison, side by side, because the
+ * comparison IS the argument and reading it across is what makes it one.
+ *
+ * Narrow (< 480px): the same three cells stacked, in the same reading order —
+ * the document's claim, the delta, then what it is measured against.
+ *
+ * 480px IS A MEASURED LINE, not a taste. Stacking is not free: this strip sits
+ * above the source document in a column whose scarce resource is vertical, so
+ * the rule is to stack only where side-by-side has stopped paying for itself.
+ * Measured on both face-offs the demo run produces, stacked height minus
+ * side-by-side height at the same strip width:
+ *
+ *     strip width   530    510    490    470    450    430
+ *     staleness     +15    +15     -1    -23    -40    -61
+ *     contradiction +85    +66    +50    +50    +30    +11
+ *
+ * Around 480–490 the staleness face-off crosses over — the stacked form starts
+ * being the SHORTER one — and the evidence columns have fallen to ~180px, a
+ * ~25-character line for a serif excerpt, which is where reading the comparison
+ * across stops working anyway. Above it, side-by-side is both shorter and
+ * legible, so it stays.
+ *
+ * THE DELTA TRACK IS BOUNDED. It used to be a raw `auto` — content-sized, and
+ * therefore giving up nothing: measured at a flat 167px from 1920 all the way
+ * down to 1024 while the evidence columns it sits between collapsed to 117px
+ * around it, so the least informative cell became the widest one. It is now
+ * `minmax(min-content, min(11rem, 22%))`: 11rem/176px clears the
+ * widest state label the two face-offs produce (max-content measures 167px and
+ * 172px), so there is nothing to gain above it; 22% is the invariant that
+ * matters, because 22% can never beat the 39% each evidence column gets. The
+ * `min-content` floor is what stops the cap from squeezing the cell below its
+ * own longest word.
+ *
+ * (`min()` cannot take `max-content` — CSS math functions reject intrinsic
+ * keywords — so the upper bound is the measured pixel value, not the keyword.)
+ */
 function Strip({
   label,
   children,
@@ -193,9 +241,11 @@ function Strip({
   return (
     <section
       aria-label={`Evidence face-off: ${label}`}
-      className="grid grid-cols-[1fr_auto_1fr] items-stretch rounded border border-line bg-surface"
+      className="@container/faceoff rounded border border-line bg-surface"
     >
-      {children}
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(min-content,min(11rem,22%))_minmax(0,1fr)] items-stretch @max-[480px]/faceoff:grid-cols-1">
+        {children}
+      </div>
     </section>
   );
 }
@@ -222,8 +272,11 @@ function Side({
   excerpt?: string;
   note?: React.ReactNode;
 }) {
+  // Stacked, a side is a full-width row, and a row needs less vertical padding
+  // than a narrow column does — in this column every pixel a strip takes is a
+  // pixel off the source document below it.
   return (
-    <div className="flex min-w-0 flex-col gap-3 px-5 py-4">
+    <div className="flex min-w-0 flex-col gap-3 px-5 py-4 @max-[480px]/faceoff:gap-2.5 @max-[480px]/faceoff:py-3">
       <div className="flex min-w-0 flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="min-w-0 truncate text-label font-medium text-ink">
@@ -272,10 +325,14 @@ function ProviderTag({ provider }: { provider: string }) {
 }
 
 /**
- * The middle column: what separates the two sides.
+ * The middle cell: what separates the two sides.
  *
  * Tone is carried by LABEL TEXT COLOUR and the 5px status dot — never by a
  * coloured border (DESIGN_SYSTEM.md, borders).
+ *
+ * It is a column between two columns while the strip is wide and a full-width
+ * row between two rows once it stacks — see Strip. It is never a thin divider:
+ * it carries the number the whole comparison is about.
  */
 function Gap({
   caption,
@@ -292,11 +349,28 @@ function Gap({
   const dot = tone === "alert" ? "bg-alert" : "bg-warn";
 
   return (
-    <div className="flex flex-col items-center justify-center gap-1.5 border-x border-line px-5 py-4 text-center">
-      <span className="text-micro text-ink-3 uppercase">
-        {caption}
+    <div
+      className={[
+        // Side by side: a centred column between the two sides.
+        "flex flex-col items-center justify-center gap-1.5 px-5 py-4 text-center",
+        "border-x border-line",
+        // Stacked: the hinge of the comparison, laid out ACROSS the strip —
+        // "Change · ≠ changed" on the left, the state on the right. The
+        // dividers rotate with the layout: a border-x between three columns is
+        // a border-y between three rows, or the cell reads as a stray rule.
+        "@max-[480px]/faceoff:flex-row @max-[480px]/faceoff:flex-wrap",
+        "@max-[480px]/faceoff:items-baseline @max-[480px]/faceoff:justify-between",
+        "@max-[480px]/faceoff:gap-x-4 @max-[480px]/faceoff:gap-y-1.5",
+        "@max-[480px]/faceoff:border-x-0 @max-[480px]/faceoff:border-y",
+        "@max-[480px]/faceoff:px-5 @max-[480px]/faceoff:py-3 @max-[480px]/faceoff:text-left",
+      ].join(" ")}
+    >
+      {/* Caption and delta stay one unit: stacked when the cell is a column,
+          on one baseline when it is a row. */}
+      <span className="flex flex-col items-center gap-1.5 @max-[480px]/faceoff:flex-row @max-[480px]/faceoff:items-baseline @max-[480px]/faceoff:gap-2.5">
+        <span className="text-micro text-ink-3 uppercase">{caption}</span>
+        <span className={`tabular text-title font-medium ${text}`}>{delta}</span>
       </span>
-      <span className={`tabular text-title font-medium ${text}`}>{delta}</span>
       <span className={`flex items-center gap-1.5 text-caption ${text}`}>
         {/* The only non-text mark in the system: a 5px status dot. */}
         <span aria-hidden className={`size-[5px] shrink-0 rounded-full ${dot}`} />

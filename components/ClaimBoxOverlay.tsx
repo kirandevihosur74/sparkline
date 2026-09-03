@@ -75,6 +75,53 @@ import type {
 const DOCUMENT_LINE_HEIGHT = 1.85;
 
 /**
+ * The document's type size, and the sheet's width. One decision, two numbers.
+ *
+ * ── WHY THE PAGE IS NOT `max-w-prose` ANY MORE ──────────────────────────────
+ *
+ * `max-w-prose` resolved to a hard 455px here, and it stayed 455px at 1152,
+ * 1280, 1440, 1600 and 1920 — width-invariant, because `prose` is 65ch of a
+ * 12.5px serif and nothing about the column entered into it. In a 942px pane
+ * that left 487px (51.7%) of the width carrying nothing and gave the page an
+ * 0.51 aspect: not a sheet of paper, a ribbon twice as tall as letter.
+ *
+ * ── WHY THE ANSWER IS NOT "REMOVE THE CAP" ──────────────────────────────────
+ *
+ * Measured, not assumed: at the full 908px of canvas this page runs 91
+ * characters to the line (99 at its longest). That is past every reading
+ * measure there is, and it is running text in a serif, not a table.
+ *
+ * ── THE SCALE IS BORROWED FROM THE OTHER VIEW OF THE SAME PAGE ──────────────
+ *
+ * The pane shows this page one of two ways and the reviewer flips between
+ * them. The other way is the real PDF at ZoomMode.FIT_TO_WIDTH: a US-Letter
+ * page (612pt) drawn across a ~900px column is scaled ~1.47×, which puts 11pt
+ * body copy on screen at ~16px. So THAT is the size this page's words are when
+ * a reviewer reads them off the paper, and a facsimile that redrew the same
+ * page at 12.5px would shrink the evidence on the way from one tab to the
+ * other. 15.5px is the nearest step of the type scale — read as a value, not
+ * as the "title" role its name carries — which is why this is `fontSize:
+ * var(--text-title)` and not the `text-title` utility: the size is wanted, the
+ * -0.01em tracking and 1.3 leading that ride along with the utility are not.
+ *
+ * At that size the sheet can be wide and still read: 720px of paper with the
+ * page's own 64px margins leaves a 592px measure, which MEASURES at 66
+ * characters to the line (78 at its longest) — inside the 45–75 band, and 25
+ * characters short of where an uncapped sheet lands. What the cap costs is
+ * 190px of canvas at 1600 (20.2%, against 51.7% before), which is not waste
+ * but the surround every document viewer draws around a page — the same grey
+ * ground the PDF view puts either side of its own sheet.
+ *
+ * TODO(token-gap: --text-doc, --sheet-width): both belong in app/theme.css
+ * beside the type scale, next to the --leading-doc gap above. The document's
+ * type is not the UI's type — it is the one thing on this screen that is
+ * quoting paper — and it currently borrows a UI step because the scale has no
+ * step of its own to lend it.
+ */
+const DOCUMENT_FONT_SIZE = "var(--text-title)";
+const SHEET_MAX_WIDTH_PX = 720;
+
+/**
  * Ring geometry, in px.
  *
  * These are `box-shadow` rings in a verdict colour, NOT container borders, so
@@ -183,13 +230,24 @@ export default function ClaimBoxOverlay({
   onSelectFinding,
 }: ClaimBoxOverlayProps) {
   return (
-    <div className="flex justify-center rounded border border-line bg-canvas p-4">
+    /* THE CANVAS the sheet sits on, and the pane's scroll container. `flex-1 /
+       h-full / min-h-[320px]` is the same three-parent answer ViewerEmbed's
+       shell gives, in the same order and with the same floor, so switching
+       between the two views of the page does not change the height of the
+       pane. `items-start` rather than the default stretch: a stretched sheet
+       would be exactly the pane's height and its words would spill out the
+       bottom of their own paper. */
+    <div className="flex h-full min-h-[320px] w-full flex-1 items-start justify-center overflow-y-auto rounded border border-line bg-canvas p-4">
       <article
         aria-label={page.label}
-        className="w-full max-w-prose bg-surface px-8 py-7 font-serif text-body text-ink-2 shadow-paper"
-        /* The one number the type scale cannot carry: the page's leading has
-           to leave room for a label in the line above the box. */
-        style={{ lineHeight: DOCUMENT_LINE_HEIGHT }}
+        className="min-h-full w-full bg-surface px-8 py-7 font-serif text-ink-2 shadow-paper sm:px-16 sm:py-14"
+        style={{
+          /* The one number the type scale cannot carry: the page's leading has
+             to leave room for a label in the line above the box. */
+          lineHeight: DOCUMENT_LINE_HEIGHT,
+          fontSize: DOCUMENT_FONT_SIZE,
+          maxWidth: `${SHEET_MAX_WIDTH_PX}px`,
+        }}
       >
         {page.blocks.map((block, blockIndex) => (
           <Block
