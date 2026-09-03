@@ -30,6 +30,9 @@ export type {
   Finding,
   ReviewSummary,
   AuditRecord,
+  SignErrorResponse,
+  SigningStep,
+  SigningTimings,
   RejectReason,
   // Pipeline view-models (fixture-only — TODO(schema-gap: pipeline))
   StageId,
@@ -160,9 +163,51 @@ export type {
   WorkspaceDashboard,
   WorkspaceRunRow,
   WorkspaceRunReport,
+  // The page overlay — every claim Nutrient DWS extracted from one page, the
+  // box drawn over each one, the strip that counts them, and the Extraction
+  // tab's payload. The unit is the CLAIM, not the finding: a claim that
+  // produced no finding is drawn in grey and is not a click target.
+  //
+  // NO COORDINATES. ClaimBbox is typed and is ABSENT on every box this build
+  // ships — DWS returns bboxes and lib/nutrient.ts drops them in three places;
+  // the full statement is TODO(schema-gap: bbox) in ./types. The overlay is
+  // positioned by the page's own ordered text runs instead, so nothing here
+  // presents fixture coordinates as extracted ones.
+  ClaimBbox,
+  ClaimBoxVerdict,
+  ClaimBox,
+  PageTextRun,
+  DocumentPageBlock,
+  DocumentPageFacsimile,
+  PageClaimCounts,
+  PageClaimStrip,
+  ClaimBoxKeyEntry,
+  ExtractionClaimRecord,
+  ExtractionPayload,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
+
+/**
+ * WHY the pipeline reached the verdict on one finding — a pure derivation over
+ * records that already exist, rendered by components/ReasoningTab.
+ *
+ * It lives in its own module rather than in fixtures.ts because it derives
+ * nothing new: it composes sentences around a finding's own fields, a query
+ * trace's `triggeredBy`, the rules in getVerificationRules() and the constants
+ * lib/contradiction.ts and lib/claims-registry.ts genuinely export. Where the
+ * record is thin it returns a `gaps` line instead of a step — see the file
+ * header, and TODO(schema-gap: rule-id) in it, for what the backend lacks.
+ */
+export type {
+  ReasoningStep,
+  ReasoningFact,
+  RuleProvenance,
+  ReasoningRouting,
+  FindingReasoning,
+} from "./reasoning";
+
+export { getFindingReasoning } from "./reasoning";
 
 export {
   DEMO_REVIEW_ID,
@@ -231,4 +276,15 @@ export {
   getWorkspaceSources,
   getWorkspaceTeam,
   getWorkspaceRunReport,
+  // The page overlay. Counts are derived per page on every call —
+  // total === withFindings + clean by construction — and getDocumentPage is
+  // undefined for a page this build has not transcribed, which is a different
+  // fact from a blank page.
+  getPageClaims,
+  getPageClaimCounts,
+  getPageClaimBoxes,
+  getDocumentPage,
+  getPageClaimStrip,
+  getClaimBoxKey,
+  getExtractionPayload,
 } from "./fixtures";

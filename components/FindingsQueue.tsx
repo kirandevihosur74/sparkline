@@ -49,13 +49,22 @@
  * this route — the header says so instead of leaving the cards' silence to be
  * read as "nothing changed".
  *
+ * COLLAPSED, the column is var(--spacing-queue-min) (w-queue-min, 46px): the
+ * control that reopens it, one 5px status dot per listed finding — the one
+ * non-text mark this system allows, in the same verdict colour the finding's
+ * card carries, each a button that selects it — and the open count set
+ * vertically beneath them. Nothing on the rail is authored: the dots are the
+ * `findings` prop and the count is `breakdown.open`, the same number the
+ * expanded header's scale line opens with.
+ *
  * Client component: it owns the selection and filter interactions.
  */
 
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 
 import CoverageBar from "./CoverageBar";
-import FindingCard, { isNewSinceLastRun } from "./FindingCard";
+import FindingCard, { isNewSinceLastRun, VERDICT } from "./FindingCard";
 import { getFindingsFooter, getRunDiff } from "@/lib/data";
 import type {
   CoverageBreakdown,
@@ -65,6 +74,7 @@ import type {
   FindingQueueFilterId,
   FindingRunChange,
   FindingsFooter,
+  FlagStatus,
   UnresolvedFindingQueueFilter,
 } from "@/lib/data";
 
@@ -125,6 +135,57 @@ const CHANGE_COPY = {
     "Nothing here is marked new: this run records no comparison with a previous run.",
 } as const;
 
+/**
+ * The collapsed rail's words, and the one thing on it that is not a word.
+ *
+ * `dot` is the 5px status dot — the ONE non-text mark this system allows
+ * (DESIGN_SYSTEM.md, Foundations → Icons), which is why the rail can be a
+ * column of them and still have no icons in it. Colour never carries the
+ * meaning alone: every dot is a button whose accessible name says the finding,
+ * its verdict IN WORDS and whether it has been decided.
+ *
+ * TODO(duplication: verdict tone) — this Record restates FindingCard's own
+ * VERDICT map, which is module-private there. The rail and the card draw the
+ * same dot for the same finding, so the two tables have to agree, and today
+ * only a browser check proves they do. The fix is one word: export VERDICT from
+ * components/FindingCard.tsx (it already exports isNewSinceLastRun for exactly
+ * this reason — one predicate, drawn and counted in two files) and import it
+ * here. That file belongs to another change in flight, so the export is left
+ * for it rather than raced for.
+ */
+/*
+ * The rail's dots read their label and colour from THE CARD'S OWN MAP, imported
+ * from FindingCard. This file briefly carried a fifth copy of that mapping,
+ * which would have made the collapsed column and the expanded one two
+ * independent claims about the same finding — free to drift the moment either
+ * changed. They are one claim now.
+ */
+
+/** How a decided finding says so in its dot's name. Total, like the map above. */
+const RAIL_STATUS: Record<FlagStatus, string> = {
+  open: "open",
+  approved: "approved",
+  rejected: "rejected",
+};
+
+const RAIL_COPY = {
+  collapse: "Collapse findings queue",
+  expand: "Expand findings queue",
+  /** Points at the column it opens; the queue is on the left of the screen. */
+  glyph: (collapsed: boolean) => (collapsed ? "›" : "‹"),
+  /**
+   * The rail's one line of text, set vertically. It counts the SAME number the
+   * expanded header's scale line opens with — `breakdown.open`, off the
+   * findings this queue is listing — so collapsing the column cannot change
+   * what it says is left to do.
+   */
+  open: (open: number) =>
+    `${open} open ${open === 1 ? "finding" : "findings"}`,
+  /** Names each dot: what it is, what it found, and whether it is settled. */
+  dot: (label: string, verdict: string, status: string) =>
+    `${label}, ${verdict}, ${status}`,
+} as const;
+
 export interface FindingsQueueProps {
   /**
    * In data-layer order, and ALREADY FILTERED: these are the findings this
@@ -159,6 +220,19 @@ export interface FindingsQueueProps {
    * composes from them rather than printing a snapshot.
    */
   footer?: FindingsFooter;
+  /**
+   * Collapses the column to var(--spacing-queue-min) — a rail of status dots,
+   * one per listed finding, and the open count set vertically beneath them.
+   *
+   * CONTROLLED when passed: the collapsed columns are the review screen's
+   * layout and ReviewWorkspace holds them beside the selection and the filter.
+   * Omitted, this component keeps its own flag instead of rendering a control
+   * that does nothing — an inert affordance is the dead control this project
+   * keeps refusing to ship — so the queue collapses on its own on any screen
+   * that has not wired the state up yet.
+   */
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
 }
 
 export default function FindingsQueue({
@@ -170,7 +244,15 @@ export default function FindingsQueue({
   selectedId,
   onSelect,
   footer = getFindingsFooter(),
+  collapsed,
+  onCollapsedChange,
 }: FindingsQueueProps) {
+  // The caller's flag wins whenever there is one; the fallback exists only so
+  // the control is never inert. See `collapsed` above.
+  const [ownCollapsed, setOwnCollapsed] = useState(false);
+  const isCollapsed = collapsed ?? ownCollapsed;
+  const setCollapsed = onCollapsedChange ?? setOwnCollapsed;
+
   // The active filter, and the one that hides nothing — both read off the
   // model's ordering contract, so neither label is typed in here.
   const activeFilter = filterFor(queue, filterId);
@@ -202,14 +284,61 @@ export default function FindingsQueue({
     SCALE_COPY.findings(breakdown.total),
   ].join(SEGMENT_SEPARATOR);
 
+  /**
+   * THE RAIL. At var(--spacing-queue-min) the queue gives 346px to the
+   * document and keeps three things: the way back, one dot per listed finding,
+   * and the count of what is still open.
+   *
+   * The dots are the queue in miniature — same order, same verdict colours,
+   * same selection — and each is a real button, so the reviewer can still move
+   * between findings without reopening the column. The list carries
+   * `.scroll-col` for the same reason the expanded list does: a run with more
+   * findings than fit must scroll the rail, never the page.
+   */
+  if (isCollapsed) {
+    return (
+      <aside
+        id={QUEUE_ID}
+        aria-label="Findings queue"
+        className="flex w-queue-min min-h-0 shrink-0 flex-col items-center gap-2 border-r border-line bg-canvas py-3 transition-[width] duration-220 ease-in-out motion-reduce:transition-none"
+      >
+        <QueueCollapseControl collapsed onToggle={() => setCollapsed(false)} />
+
+        <div className="scroll-col flex w-full flex-1 flex-col items-center gap-2 px-2 py-1">
+          {findings.map((finding) => (
+            <RailDot
+              key={finding.id}
+              finding={finding}
+              selected={finding.id === selectedId}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+
+        {/* The one line of text, turned to fit. Counted off `breakdown`, like
+            every number in the expanded header — never typed in. */}
+        <p className="tabular shrink-0 rotate-180 [writing-mode:vertical-rl] text-micro uppercase text-ink-3">
+          {RAIL_COPY.open(breakdown.open)}
+        </p>
+      </aside>
+    );
+  }
+
   return (
     <aside
+      id={QUEUE_ID}
       aria-label="Findings queue"
-      className="flex w-queue min-h-0 shrink-0 flex-col border-r border-line bg-canvas"
+      className="flex w-queue min-h-0 shrink-0 flex-col border-r border-line bg-canvas transition-[width] duration-220 ease-in-out motion-reduce:transition-none"
     >
       <div className="flex shrink-0 flex-col gap-2.5 border-b border-line bg-surface px-4 py-3.5">
         <div className="flex flex-col gap-1">
-          <h2 className="text-label font-medium text-ink">Findings</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-label font-medium text-ink">Findings</h2>
+            <QueueCollapseControl
+              collapsed={false}
+              onToggle={() => setCollapsed(true)}
+            />
+          </div>
 
           {/* The scale line replaces the bare open count that sat top-right:
               it says the same thing and three more, so both would repeat. */}
@@ -308,6 +437,98 @@ export default function FindingsQueue({
         </p>
       </div>
     </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The collapsed rail
+// ---------------------------------------------------------------------------
+
+/** The region the collapse control opens and closes, for aria-controls. */
+const QUEUE_ID = "findings-queue";
+
+/**
+ * The control that collapses the column and the one that reopens it — the same
+ * component in both states, so the way back is where the way out was.
+ *
+ * A single chevron, the same class of typographic mark as the "Next finding →"
+ * arrow this screen's decision bar already sets in copy — not an icon from a
+ * set, and it carries nothing on its own: `aria-label` names the action in
+ * words, `aria-expanded` reports the column's state, `title` repeats the
+ * sentence for the mouse.
+ */
+function QueueCollapseControl({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const label = collapsed ? RAIL_COPY.expand : RAIL_COPY.collapse;
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={label}
+      aria-expanded={!collapsed}
+      aria-controls={QUEUE_ID}
+      title={label}
+      className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded border border-line bg-surface text-caption leading-none text-ink-3 hover:text-ink focus-visible:shadow-selected focus-visible:outline-none"
+    >
+      <span aria-hidden>{RAIL_COPY.glyph(collapsed)}</span>
+    </button>
+  );
+}
+
+/**
+ * One finding as a 5px dot in a pressable target.
+ *
+ * The dot is the finding's verdict colour, the same one its card carries. A
+ * DECIDED finding is drawn back — the queue is a list of what is left to do, so
+ * the eleven dots should not all shout equally — and it says which decision it
+ * was in its accessible name, because colour and opacity are not meaning.
+ *
+ * Selection is a HALO, not a border: `shadow-selected` is the 1px ink ring
+ * every selected thing on this screen already wears, and it costs no layout, so
+ * the column of dots does not shift by a pixel when the selection moves. It is
+ * not `shadow-action` — that belongs to the decision bar's Approve button, and
+ * there is one of those per screen.
+ */
+function RailDot({
+  finding,
+  selected,
+  onSelect,
+}: {
+  finding: Finding;
+  selected: boolean;
+  onSelect: (findingId: string) => void;
+}) {
+  const verdict = VERDICT[finding.verdict];
+  const name = RAIL_COPY.dot(
+    finding.label,
+    verdict.label,
+    RAIL_STATUS[finding.status],
+  );
+
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      aria-label={name}
+      title={name}
+      onClick={() => onSelect(finding.id)}
+      className={`flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full ${
+        selected ? "shadow-selected" : ""
+      } focus-visible:shadow-selected focus-visible:outline-none`}
+    >
+      <span
+        aria-hidden="true"
+        className={`size-[5px] rounded-full ${verdict.dot} ${
+          finding.status === "open" ? "" : "opacity-40"
+        }`}
+      />
+    </button>
   );
 }
 

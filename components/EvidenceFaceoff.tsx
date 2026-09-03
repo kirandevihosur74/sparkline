@@ -1,9 +1,11 @@
 /**
  * EvidenceFaceoff — DESIGN_SYSTEM.md item 4.
  *
- * Three-column strip: document side · gap · comparison side. Each side carries
+ * Three-cell strip: document side · gap · comparison side. Each side carries
  * a source label with a PROVIDER TAG, one large tabular value, and a note; the
- * gap column carries the delta.
+ * gap cell carries the delta. Side by side while the strip is wide enough for
+ * the comparison to read across, stacked in the same order once it is not —
+ * decided by a CONTAINER query on the strip itself, see Strip.
  *
  * Both sides come off ONE finding — never off two separately-passed props:
  *
@@ -19,6 +21,7 @@
  * Server component — renders props, holds no state.
  */
 
+import ClampedText from "./ClampedText";
 import type {
   ContradictionFinding,
   DocumentMeta,
@@ -182,7 +185,60 @@ export function StalenessFaceoff({
 // Pieces
 // ---------------------------------------------------------------------------
 
-/** The bordered three-column shell. Dividers are the standard 1px line. */
+/**
+ * The bordered shell.
+ *
+ * TWO LAYOUTS, ONE MEASUREMENT. The strip is a NAMED CONTAINER (`faceoff`) and
+ * every responsive decision below is a container query against its own inline
+ * size — never a viewport breakpoint. That is not a stylistic preference: the
+ * strip's width is set by three states the viewport knows nothing about — the
+ * reasoning panel being open, the findings queue being collapsed, and the nav
+ * rail being collapsed. A `md:` breakpoint would stack a 900px-wide strip and
+ * leave a 400px one side-by-side. The container sees the width that exists.
+ *
+ * Wide (>= 560px): document · delta · comparison, side by side, because the
+ * comparison IS the argument and reading it across is what makes it one.
+ *
+ * Narrow (< 560px): the same three cells stacked, in the same reading order —
+ * the document's claim, the delta, then what it is measured against.
+ *
+ * 560px IS A MEASURED LINE, not a taste: it is the last width at which the
+ * DELTA VALUE still sets on one line in both face-offs the demo run produces.
+ * Sweeping strip width in 10px steps, the delta cell's own value ("≠ changed",
+ * "Δ $25M · 13.4%") holds one line down to 570px and breaks in two below it —
+ * and a hinge that reads "Δ $25M ·" over "13.4%" has stopped being the number
+ * the whole comparison is about. The evidence columns are ~206px there, a
+ * ~28-character line of serif excerpt, so the two failures arrive together.
+ *
+ * STACKING IS NOT FREE, which is why the line sits as low as it does. This
+ * strip is above the source document in a column whose scarce resource is
+ * vertical, and stacked height minus side-by-side height at the same strip
+ * width measures:
+ *
+ *     strip width   570    530    490    450    410
+ *     staleness     +57    +15     -1    -40    -81
+ *     contradiction +85    +85    +50    +30     -9
+ *
+ * So side-by-side is the SHORTER form everywhere above ~490px, and it is kept
+ * everywhere it is also legible. The 560–490 band is the one place the strip
+ * spends height on purpose — up to 85px — because the alternative there is a
+ * broken delta and a 25-character evidence column.
+ *
+ * THE DELTA TRACK IS BOUNDED. It used to be a raw `auto` — content-sized, and
+ * therefore giving up nothing: measured at a flat 167px from 1920 all the way
+ * down to 1024 while the evidence columns it sits between collapsed to 117px
+ * around it, so the least informative cell became the widest one. It is now
+ * `minmax(min-content, min(11rem, 26%))`. 11rem/176px clears the widest cell
+ * the two face-offs produce (max-content measures 167px and 172px), so there
+ * is nothing to gain above it. 26% is the invariant that matters: 26% can
+ * never beat the 37% each evidence column gets, whatever a future delta label
+ * says, and it is still wide enough to keep the value on one line everywhere
+ * the strip stays side by side. The `min-content` floor stops the cap from
+ * squeezing the cell below its own longest word.
+ *
+ * (`min()` cannot take `max-content` — CSS math functions reject intrinsic
+ * keywords — so the upper bound is the measured pixel value, not the keyword.)
+ */
 function Strip({
   label,
   children,
@@ -193,9 +249,11 @@ function Strip({
   return (
     <section
       aria-label={`Evidence face-off: ${label}`}
-      className="grid grid-cols-[1fr_auto_1fr] items-stretch rounded border border-line bg-surface"
+      className="@container/faceoff rounded border border-line bg-surface"
     >
-      {children}
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(min-content,min(11rem,26%))_minmax(0,1fr)] items-stretch @max-[560px]/faceoff:grid-cols-1">
+        {children}
+      </div>
     </section>
   );
 }
@@ -222,8 +280,11 @@ function Side({
   excerpt?: string;
   note?: React.ReactNode;
 }) {
+  // Stacked, a side is a full-width row, and a row needs less vertical padding
+  // than a narrow column does — in this column every pixel a strip takes is a
+  // pixel off the source document below it.
   return (
-    <div className="flex min-w-0 flex-col gap-3 px-5 py-4">
+    <div className="flex min-w-0 flex-col gap-3 px-5 py-4 @max-[560px]/faceoff:gap-2.5 @max-[560px]/faceoff:py-3">
       <div className="flex min-w-0 flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="min-w-0 truncate text-label font-medium text-ink">
@@ -243,9 +304,32 @@ function Side({
           {formatPercent(confidence)} {confidenceLabel}
         </span>
         {excerpt ? (
-          <p className="font-serif text-body break-words text-ink-2">
-            &ldquo;{excerpt}&rdquo;
-          </p>
+          /*
+           * Clamped ONLY while the cells are narrow, and that qualifier is the
+           * whole of the design.
+           *
+           * Measured: at a 942px strip the clamp hid one line of one excerpt
+           * and its control cost a line back, so the strip came out 17px
+           * TALLER than with no clamp at all. And stacking does not make
+           * excerpts tall — it makes each cell full width, so they need FEWER
+           * lines: at a 532px strip nothing was cut at all.
+           *
+           * The excerpt is only tall in the narrow side-by-side band, roughly
+           * 560-700px of strip, where a cell is ~30 characters across and a
+           * quoted passage runs to six lines. That is the only place this
+           * earns its control, so it is the only place it clamps.
+           *
+           * Tying the clamp to a container query rather than to state makes
+           * the control self-correcting: where the class does not apply,
+           * nothing is cut, the measurement reads zero, and no control is
+           * drawn. Three lines, not two — this is the evidence itself, and two
+           * lines of a quoted passage too often ends mid-clause.
+           */
+          <ClampedText
+            text={`\u201C${excerpt}\u201D`}
+            clampClassName="@max-[700px]/faceoff:line-clamp-3"
+            className="font-serif text-body break-words text-ink-2"
+          />
         ) : note ? (
           <p className="text-body break-words text-ink-2">{note}</p>
         ) : (
@@ -272,10 +356,14 @@ function ProviderTag({ provider }: { provider: string }) {
 }
 
 /**
- * The middle column: what separates the two sides.
+ * The middle cell: what separates the two sides.
  *
  * Tone is carried by LABEL TEXT COLOUR and the 5px status dot — never by a
  * coloured border (DESIGN_SYSTEM.md, borders).
+ *
+ * It is a column between two columns while the strip is wide and a full-width
+ * row between two rows once it stacks — see Strip. It is never a thin divider:
+ * it carries the number the whole comparison is about.
  */
 function Gap({
   caption,
@@ -292,11 +380,31 @@ function Gap({
   const dot = tone === "alert" ? "bg-alert" : "bg-warn";
 
   return (
-    <div className="flex flex-col items-center justify-center gap-1.5 border-x border-line px-5 py-4 text-center">
-      <span className="text-micro text-ink-3 uppercase">
-        {caption}
+    <div
+      className={[
+        // Side by side: a centred column between the two sides.
+        // px-4 side by side (the narrower the strip, the more the 40px of
+        // padding cost the delta's own words), px-5 stacked to line its text
+        // up with the two sides above and below it.
+        "flex flex-col items-center justify-center gap-1.5 px-4 py-4 text-center",
+        "border-x border-line",
+        // Stacked: the hinge of the comparison, laid out ACROSS the strip —
+        // "Change · ≠ changed" on the left, the state on the right. The
+        // dividers rotate with the layout: a border-x between three columns is
+        // a border-y between three rows, or the cell reads as a stray rule.
+        "@max-[560px]/faceoff:flex-row @max-[560px]/faceoff:flex-wrap",
+        "@max-[560px]/faceoff:items-baseline @max-[560px]/faceoff:justify-between",
+        "@max-[560px]/faceoff:gap-x-4 @max-[560px]/faceoff:gap-y-1.5",
+        "@max-[560px]/faceoff:border-x-0 @max-[560px]/faceoff:border-y",
+        "@max-[560px]/faceoff:px-5 @max-[560px]/faceoff:py-3 @max-[560px]/faceoff:text-left",
+      ].join(" ")}
+    >
+      {/* Caption and delta stay one unit: stacked when the cell is a column,
+          on one baseline when it is a row. */}
+      <span className="flex flex-col items-center gap-1.5 @max-[560px]/faceoff:flex-row @max-[560px]/faceoff:items-baseline @max-[560px]/faceoff:gap-2.5">
+        <span className="text-micro text-ink-3 uppercase">{caption}</span>
+        <span className={`tabular text-title font-medium ${text}`}>{delta}</span>
       </span>
-      <span className={`tabular text-title font-medium ${text}`}>{delta}</span>
       <span className={`flex items-center gap-1.5 text-caption ${text}`}>
         {/* The only non-text mark in the system: a 5px status dot. */}
         <span aria-hidden className={`size-[5px] shrink-0 rounded-full ${dot}`} />

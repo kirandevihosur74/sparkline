@@ -33,6 +33,14 @@
  *   "/" focuses search. There is no search field in this build; lib/data
  *   refuses the binding, and this hook therefore never sees it.
  *
+ * WHAT THE VIEW KEYS ARE. Seven of the intents below — the analysis panel,
+ * its two tabs, the two rails, focus mode and the claim overlay — change what
+ * the screen SHOWS and touch neither the selection nor the record. They are
+ * plumbed exactly like the rest: lib/data names the keystroke, the caller
+ * supplies the handler, and a caller that supplies none leaves the key to the
+ * browser. Nothing about a toggle is special-cased here; a toggle is just an
+ * action whose handler happens to flip a boolean the screen owns.
+ *
  * ESCAPE IS NOT A SHORTCUT. It dismisses the shortcut sheet while the sheet
  * is open, and does nothing at any other time. It is not in getShortcuts()
  * and must not be: the sheet advertises its own "Close shortcuts" control,
@@ -53,6 +61,13 @@ export type ShortcutIntent =
   | "approve"
   | "reject"
   | "jumpToSource"
+  | "toggleAnalysisPanel"
+  | "showReasoning"
+  | "showExtraction"
+  | "toggleNav"
+  | "toggleQueue"
+  | "toggleFocusMode"
+  | "toggleAllClaims"
   | "help";
 
 /**
@@ -79,22 +94,50 @@ const INTENT_KEY: Record<ShortcutIntent, string> = {
   approve: "A",
   reject: "R",
   jumpToSource: "Enter",
+  toggleAnalysisPanel: "E",
+  showReasoning: "1",
+  showExtraction: "2",
+  toggleNav: "[",
+  toggleQueue: "]",
+  toggleFocusMode: "F",
+  toggleAllClaims: "S",
   help: "?",
 };
 
-/** Fixed order, so two intents bound to one key could never race. */
+/**
+ * Fixed order, so two intents bound to one key could never race.
+ *
+ * THIS LIST IS WHAT THE LOOP WALKS, and TypeScript does not check it against
+ * INTENT_KEY: an intent added to the map above and forgotten here is a key
+ * that is spelled, documented, printed on the sheet — and never fires, with
+ * nothing to catch it. Every intent in the union appears exactly once below;
+ * keep it that way when adding one.
+ */
 const INTENTS: readonly ShortcutIntent[] = [
   "next",
   "previous",
   "approve",
   "reject",
   "jumpToSource",
+  "toggleAnalysisPanel",
+  "showReasoning",
+  "showExtraction",
+  "toggleNav",
+  "toggleQueue",
+  "toggleFocusMode",
+  "toggleAllClaims",
   "help",
 ];
 
 /**
  * The one intent that still runs while the shortcut sheet is open: the key
  * that opened it has to be able to close it again.
+ *
+ * The view keys are deliberately not here. A reviewer reading the sheet is
+ * reading it over the screen it describes, and a panel that opened or a rail
+ * that collapsed behind the dialog would move the layout they are about to
+ * look back at. They are not swallowed either — see the loop: a suspended
+ * intent returns without preventDefault, so the keystroke stays the browser's.
  */
 const RUNS_WHILE_SUSPENDED: ReadonlySet<ShortcutIntent> = new Set(["help"]);
 
@@ -103,6 +146,12 @@ const RUNS_WHILE_SUSPENDED: ReadonlySet<ShortcutIntent> = new Set(["help"]);
  * thing a reviewer expects to repeat. A decision is not: an auto-repeating R
  * would open the rejection reason row and then sign it with whatever reason
  * was preselected, in the time it takes to notice a finger is still down.
+ *
+ * Nor is a toggle. A held E, F, "[" or "]" would flap the panel or a rail at
+ * the key-repeat rate and land on whichever state the release happened to fall
+ * on, which is a coin flip dressed as a control. The tab keys are idempotent
+ * and would survive repeating, but there is nothing to gain by letting them:
+ * pressing "1" twice selects Reasoning twice.
  */
 const REPEATABLE: ReadonlySet<ShortcutIntent> = new Set(["next", "previous"]);
 

@@ -79,9 +79,16 @@ export default function WorkspacePolicyPanel({
 
           <ul className="flex flex-col rounded border border-line bg-surface">
             {policy.rules.map((rule, index) => (
+              /* `id` makes each rule a real anchor target: the rule chip in
+                 the review screen's Reasoning tab links to `/rules#<id>`, so
+                 the verdict is one keystroke from the policy it came out of.
+                 `scroll-mt-5` matches the list's own top padding, so an
+                 anchored rule lands clear of the policy strip above it rather
+                 than flush against the edge of the scroll column. */
               <li
                 key={rule.id}
-                className={`px-5 py-4 ${index > 0 ? "border-t border-line-soft" : ""}`}
+                id={rule.id}
+                className={`scroll-mt-5 px-5 py-4 ${index > 0 ? "border-t border-line-soft" : ""}`}
               >
                 <div className="flex items-baseline justify-between gap-4">
                   <p className="min-w-0 text-label font-medium text-ink">

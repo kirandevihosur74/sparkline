@@ -5,6 +5,7 @@ import {
   signDecision,
   withdrawDecision,
 } from "@/lib/runs/records";
+import type { SignErrorResponse } from "@/lib/data/types";
 
 /**
  * Beat 3 — a human approved/rejected a finding; create a signed, auditable
@@ -13,7 +14,14 @@ import {
  * POST body: JSON { reviewId, flagId, decision: "approved" | "rejected",
  *                   reason?, note?, reviewer? }
  * Returns { record: AuditRecord } — signedDocumentUrl serves the signed PDF,
- * contentHash is the SHA-256 of its bytes.
+ * contentHash is the SHA-256 of its bytes, and `timings` is what each step of
+ * the chain actually cost, measured server-side (lib/types.ts SigningTimings).
+ *
+ * On failure returns { error, step? } (SignErrorResponse): `step` names which
+ * link of the chain broke — "convert" | "sign" | "hash" | "store" — as a
+ * field of its own, so the UI never has to read it out of the message. It is
+ * absent when nothing had started: a 400 bad request, or a 404 for a review
+ * or finding that does not exist.
  *
  * DELETE ?reviewId=&flagId= — withdraw a decision (undo): removes the ledger
  * row and the signed PDF behind it.
@@ -46,7 +54,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ record });
   } catch (error) {
     if (error instanceof SignError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
+      // Status mapping is unchanged: a DWS failure is still 500, a missing
+      // review still 404. `step` only ADDS attribution where there is one.
+      const body: SignErrorResponse = {
+        error: error.message,
+        ...(error.step ? { step: error.step } : {}),
+      };
+      return NextResponse.json(body, { status: error.status });
     }
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

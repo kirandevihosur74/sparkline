@@ -14,6 +14,15 @@
  *   approved — confirmation strip on `accent-soft`
  *   rejected — confirmation strip on `alert-soft`
  *
+ * THE SIGNING CHAIN is what those states are about, and it is now on screen
+ * rather than behind a spinner. Approving a finding runs four steps on the
+ * server — Markdown to PDF (Nutrient DWS convert), the digital signature
+ * (Nutrient DWS sign), SHA-256 over the signed bytes, then the file and its
+ * ledger row to disk — and the bar shows them: as a pending group while the
+ * request is open, with the server's own per-step measurements once it
+ * returns, and with the broken link named when it fails. See the SigningChain
+ * block below for why NONE of it animates, which is the crux of the feature.
+ *
  * Border discipline: one 1px --color-line rule along the top, never coloured.
  * The resolved state is carried by the soft surface tint plus the decision word
  * in `accent` / `alert` text — the same pairing FindingCard uses for a resolved
@@ -55,6 +64,14 @@ import type {
   Shortcut,
   ShortcutGroupId,
 } from "@/lib/data";
+/**
+ * The signing chain's own shapes. Imported from lib/data/types.ts rather than
+ * from the lib/data barrel because the barrel does not re-export them yet;
+ * both names are canonical in lib/types.ts and re-exported there verbatim, so
+ * this is the same type either way. Move the import up to "@/lib/data" the
+ * moment index.ts lists them.
+ */
+import type { SigningStep, SigningTimings } from "@/lib/data/types";
 import { formatUtc } from "@/lib/format";
 
 /**
@@ -254,6 +271,199 @@ const DEFAULT_REJECT_REASON: RejectReason = "not_a_conflict";
 /** A real record is served by the app; fixture paths are recorded, not served. */
 const SERVED_RECORD_PREFIX = "/api/records/";
 
+/** The prefix that disqualifies a digest: a committed value, never computed. */
+const PLACEHOLDER_HASH_PREFIX = "fixture-";
+
+// ---------------------------------------------------------------------------
+// The signing chain
+//
+// What "Approve finding" actually does, on screen, in order: the Markdown
+// record is converted to a PDF by Nutrient DWS, DWS applies the digital
+// signature, the SHA-256 is taken over the signed bytes, and the file plus its
+// ledger row are written. Four steps, one request.
+//
+// THE HONESTY PROBLEM, and the whole reason this block reads the way it does:
+// the client gets NO per-step progress. POST /api/sign runs the chain
+// server-side and answers once, when the last step is done or one of them
+// threw. So while a signature is in flight the only true statement is "all
+// four of these are what is happening" — the UI cannot know that convert has
+// finished and sign has begun, and a spinner walking the list on a timer would
+// be inventing knowledge the system does not have. The pending state therefore
+// shows the four steps as ONE pending group and says so in words; they resolve
+// together when the response lands. Durations appear only afterwards, and only
+// from `SigningTimings`, which the server measured.
+// ---------------------------------------------------------------------------
+
+/**
+ * The four steps, in the order they run, each paired with the field of
+ * `SigningTimings` that measured it. The `step` ids are the sign route's own
+ * (`SignErrorResponse.step`), so a failure maps onto this list by identity
+ * rather than by position.
+ */
+const CHAIN_STEPS: readonly {
+  step: SigningStep;
+  label: string;
+  ms: keyof SigningTimings;
+}[] = [
+  { step: "convert", label: "Convert", ms: "convertMs" },
+  { step: "sign", label: "Sign", ms: "signMs" },
+  { step: "hash", label: "Hash", ms: "hashMs" },
+  { step: "store", label: "Store", ms: "storeMs" },
+];
+
+/**
+ * What the four numbered steps ARE, said once beneath them rather than
+ * repeated inside each one — the list stays one line wide, and the provider
+ * name sits next to the two steps it actually performs.
+ */
+const CHAIN_SUMMARY =
+  `Markdown record to PDF, then the digital signature — both by ${SIGNING_PROVIDER} — ` +
+  "then SHA-256 over the signed bytes, then the file and its ledger row to disk.";
+
+/**
+ * Which state the chain is drawn in. A union rather than four booleans: a
+ * chain cannot be both pending and measured, and the compiler should say so.
+ */
+type ChainState =
+  /** In flight. No step is ahead of any other, because nothing reports. */
+  | { kind: "pending" }
+  /** The response named a broken link — or, with no `step`, did not. */
+  | { kind: "failed"; step?: SigningStep }
+  /** Signed, and the server measured it. */
+  | { kind: "measured"; timings: SigningTimings }
+  /**
+   * Signed (or, for a `placeholder`, never signed) with no timings on the
+   * record. The two are different facts and the footnote says which.
+   */
+  | { kind: "unrecorded"; placeholder: boolean };
+
+/**
+ * A measured wall-clock duration, one helper so the four steps and the total
+ * cannot format differently. Milliseconds below a second, seconds to two
+ * decimals above it — "1284 ms" is four digits the reader has to convert.
+ *
+ * Returns undefined rather than a zero for anything that is not a real
+ * measurement: a duration this component cannot vouch for is not printed.
+ */
+function formatDuration(ms: number | undefined): string | undefined {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return undefined;
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+/** What a step's trailing text says, per state. Absent where nothing is known. */
+function stepStatus(
+  state: ChainState,
+  index: number,
+): { text?: string; ink: string } {
+  switch (state.kind) {
+    case "measured":
+      return {
+        text: formatDuration(state.timings[CHAIN_STEPS[index]!.ms]),
+        ink: "text-ink-2",
+      };
+    case "failed": {
+      // The chain is strictly sequential and the server runs it in order, so a
+      // named failure is a real statement about the steps around it: the ones
+      // before it returned, the ones after it never started. That is inferred
+      // from the ordering, not guessed.
+      const failed = state.step
+        ? CHAIN_STEPS.findIndex((entry) => entry.step === state.step)
+        : -1;
+      if (failed < 0) return { ink: "text-ink-2" };
+      if (index < failed) return { text: "done", ink: "text-ink-2" };
+      if (index === failed) return { text: "failed", ink: "text-alert" };
+      return { text: "not reached", ink: "text-ink-3" };
+    }
+    case "unrecorded":
+      // A placeholder record ran none of this, so its steps are drawn in the
+      // metadata rung rather than as things that happened.
+      return { ink: state.placeholder ? "text-ink-3" : "text-ink-2" };
+    case "pending":
+      return { ink: "text-ink-2" };
+  }
+}
+
+/** The sentence under the steps. Every branch states what is true of it. */
+function chainFootnote(state: ChainState): string {
+  switch (state.kind) {
+    case "pending":
+      return `${CHAIN_SUMMARY} All four run inside a single request and the server answers only once the last one is done, so no step can be shown finishing ahead of another.`;
+    case "measured":
+      return `${CHAIN_SUMMARY} Each duration was measured on the server while it ran.`;
+    case "failed":
+      return state.step
+        ? `${CHAIN_SUMMARY} A step runs only if the one before it returned, so the steps after the break never started.`
+        : `${CHAIN_SUMMARY} The response did not name which of the four broke.`;
+    case "unrecorded":
+      return state.placeholder
+        ? `${CHAIN_SUMMARY} None of it ran for this record: it is a committed fixture placeholder, never converted, signed, hashed or stored.`
+        : `${CHAIN_SUMMARY} This decision was signed before the chain was instrumented, so no per-step durations were recorded for it.`;
+  }
+}
+
+/**
+ * The chain row: four numbered steps, the total where there is one, and one
+ * sentence saying what they are and what this particular state can vouch for.
+ *
+ * NOT a live region, deliberately. While a signature is in flight the bar
+ * already has exactly one `aria-live="polite"` line — "Signing with Nutrient
+ * DWS · as {name}…" — and a failure already has one `role="alert"`. Making the
+ * four steps live as well would announce the same event two to five times.
+ * The list is ordinary labelled content: a screen reader reaches it by
+ * reading the bar, which is where a sighted reviewer finds it too.
+ *
+ * Typographic only — no shadow, no accent, no icons. The step number carries
+ * the order (an `<ol>`, so it is order to assistive technology as well) and
+ * the only colour is `alert` on a step the server said broke.
+ */
+function SigningChain({ state }: { state: ChainState }) {
+  const total =
+    state.kind === "measured" ? formatDuration(state.timings.totalMs) : undefined;
+
+  return (
+    <>
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <ol
+          aria-label="Signing chain"
+          className="flex flex-wrap items-baseline gap-x-3.5 gap-y-1"
+        >
+          {CHAIN_STEPS.map((entry, index) => {
+            const status = stepStatus(state, index);
+            return (
+              <li
+                key={entry.step}
+                className="flex items-baseline gap-1.5 text-caption"
+              >
+                <span className="tabular text-ink-3">{index + 1}</span>
+                <span className={status.ink}>{entry.label}</span>
+                {status.text ? (
+                  <span className="tabular text-ink-3">{status.text}</span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+
+        {/*
+         * The total is set apart from the four parts because it is not made of
+         * them: the server times the whole call independently, so the gap
+         * between it and their sum is real overhead. Printing it inside the
+         * list would read as a fifth step or as their sum, and it is neither.
+         */}
+        {total ? (
+          <p className="text-caption text-ink-3">
+            Total <span className="tabular text-ink-2">{total}</span>, measured
+            end to end rather than summed from the four — the difference
+            between them is the request&rsquo;s own overhead.
+          </p>
+        ) : null}
+      </div>
+
+      <p className="mt-1 text-caption text-ink-3">{chainFootnote(state)}</p>
+    </>
+  );
+}
+
 export interface DecisionBarProps {
   /** The finding under review. `finding.status` drives which state renders. */
   finding: Finding;
@@ -302,6 +512,14 @@ export interface DecisionBarProps {
   signing?: boolean;
   /** Why the last signature attempt failed. The finding stays open. */
   signError?: string;
+  /**
+   * WHICH link of the chain broke — `SignErrorResponse.step` off the sign
+   * route's error body, passed through verbatim. Absent when the failure
+   * happened before the chain started (a bad request, a review or finding
+   * that does not exist) or when the response named no step: the bar then
+   * says the message and nothing about the steps, rather than blaming one.
+   */
+  signErrorStep?: SigningStep;
   /** Pre-selected rejection reason. Defaults to "Not a conflict". */
   defaultRejectReason?: RejectReason;
   onApprove?: (findingId: string) => void;
@@ -323,13 +541,57 @@ function formatSignedAt(iso: string | undefined): string | undefined {
   return iso ? formatUtc(iso) : undefined;
 }
 
-/** "sha256:d618a37c…" — enough of a digest to compare against the ledger. */
-function shortHash(hash: string | undefined): string | undefined {
-  if (!hash || hash.startsWith("fixture-")) return undefined;
-  const separator = hash.indexOf(":");
-  const digest = separator >= 0 ? hash.slice(separator + 1) : hash;
-  return `${separator >= 0 ? hash.slice(0, separator + 1) : ""}${digest.slice(0, 12)}…`;
+/**
+ * The digest, split so the strip can print it the way the ledger does:
+ * qualifier apart from value.
+ *
+ * It no longer swallows a fixture hash. Hiding it made the two kinds of record
+ * look identical here — one row silently short of a hash — when they are the
+ * opposite of each other: a `sha256:` digest is a real SHA-256 of really
+ * signed bytes, and a `fixture-sha256:` one is a committed placeholder that
+ * was never computed over anything. So both render, with the prefix carried on
+ * screen in the muted rung and the value in the reading rung, exactly as
+ * AuditLedger's own hash cell does. That is a deliberate mirror of its logic,
+ * not an import: the ledger owns its cell and this bar owns its line.
+ *
+ * TRUNCATED, unlike the ledger's: the bar is one cramped row and the full
+ * 64-character digest belongs on the audit screen, which prints it whole.
+ * Twelve characters is enough to match a row against that screen by eye.
+ */
+interface ShortDigest {
+  /** "sha256:" or "fixture-sha256:" — rendered, never trimmed away. */
+  prefix: string;
+  /** The first 12 characters of the value, elided. */
+  value: string;
+  /** True when the prefix disqualifies it: committed, not computed. */
+  placeholder: boolean;
 }
+
+function shortHash(hash: string | undefined): ShortDigest | undefined {
+  if (!hash) return undefined;
+  const separator = hash.indexOf(":");
+  const value = separator >= 0 ? hash.slice(separator + 1) : hash;
+  return {
+    prefix: separator >= 0 ? hash.slice(0, separator + 1) : "",
+    value: value.length > 12 ? `${value.slice(0, 12)}…` : value,
+    placeholder: hash.startsWith(PLACEHOLDER_HASH_PREFIX),
+  };
+}
+
+/**
+ * Which link broke, in the reviewer's terms — the steps that DID complete
+ * named before the one that did not, because "converted but not signed" tells
+ * a reviewer where the record got to and a bare stack message does not. Keyed
+ * as a total Record so a fifth step fails the build rather than falling
+ * through to an unattributed failure.
+ */
+const STEP_FAILURE: Record<SigningStep, string> = {
+  convert: `${SIGNING_PROVIDER} could not convert the record to a PDF, so nothing was signed`,
+  sign: `the record was converted to a PDF, but ${SIGNING_PROVIDER} could not sign it`,
+  hash: "the record was converted and signed, but its SHA-256 could not be computed",
+  store:
+    "the record was converted, signed and hashed, but it could not be written to disk",
+};
 
 export default function DecisionBar({
   finding,
@@ -338,6 +600,7 @@ export default function DecisionBar({
   signature = getDecisionSignature(finding.id),
   signing = false,
   signError,
+  signErrorStep,
   defaultRejectReason = DEFAULT_REJECT_REASON,
   onApprove,
   onReject,
@@ -400,6 +663,27 @@ export default function DecisionBar({
             </div>
           ) : null}
 
+          {/*
+           * The chain, on its own full-width row above the controls — the same
+           * shape the reason radios take, for the same reason: it is about the
+           * decision, not one of the buttons, and it needs the bar's width so
+           * it stays two lines instead of wrapping beside them.
+           *
+           * It is scoped to the two moments it is true of: while DWS has a
+           * record in flight, and after an attempt that failed. An open finding
+           * nobody has decided yet gets nothing — a chain drawn there would be
+           * describing work that has not been asked for.
+           */}
+          {signing || signError ? (
+            <div className="border-b border-line-soft px-5 py-2">
+              <SigningChain
+                state={
+                  signing ? { kind: "pending" } : { kind: "failed", step: signErrorStep }
+                }
+              />
+            </div>
+          ) : null}
+
           <div className="flex items-center justify-between gap-4 px-5 py-3">
             <div className="min-w-0">
               {/*
@@ -439,9 +723,25 @@ export default function DecisionBar({
                 )}
               </p>
 
+              {/*
+               * One alert, still, and still the only one: the chain row above
+               * marks the broken step in `alert` but announces nothing, so a
+               * screen reader hears this sentence once. It now names the link
+               * that broke before the message the server sent, because "the
+               * record was converted but could not be signed" is the fact a
+               * reviewer can act on and the message underneath it is evidence.
+               *
+               * NO RETRY BUTTON. Approve is still on screen, still enabled,
+               * and pressing it runs the same POST again — that IS the retry,
+               * and it is wired to something real. A second control beside it
+               * would be a duplicate of the primary action, and this bar is
+               * allowed exactly one dominant action.
+               */}
               {signError ? (
                 <p role="alert" className="mt-0.5 text-caption text-alert">
-                  Not signed — {signError}
+                  Not signed —{" "}
+                  {signErrorStep ? `${STEP_FAILURE[signErrorStep]}. ` : null}
+                  {signError}
                 </p>
               ) : null}
             </div>
@@ -517,8 +817,26 @@ export default function DecisionBar({
   const signedAt = formatSignedAt(record?.signedAt);
   const rejectReason = record?.reason ? REJECT_REASON[record.reason] : undefined;
   const hash = shortHash(record?.contentHash);
+  /*
+   * A path this app serves is a link; anything else is a recorded path, and
+   * printing it as a link would be a control that leads nowhere. Same test
+   * AuditLedger applies to the same field, and the same three-way outcome:
+   * link · path-as-text · nothing recorded.
+   */
   const recordUrl = record?.signedDocumentUrl?.startsWith(SERVED_RECORD_PREFIX)
     ? record.signedDocumentUrl
+    : undefined;
+  const recordPath = recordUrl ? undefined : record?.signedDocumentUrl;
+
+  /*
+   * The chain, once the decision is resolved. Only where there IS a record:
+   * with none, this bar knows a status and nothing about how it was signed,
+   * and drawing four steps off that would be describing a chain it never saw.
+   */
+  const chainState: ChainState | undefined = record
+    ? record.timings
+      ? { kind: "measured", timings: record.timings }
+      : { kind: "unrecorded", placeholder: hash?.placeholder ?? false }
     : undefined;
 
   return (
@@ -563,14 +881,33 @@ export default function DecisionBar({
               <span className="text-ink-3"> · {SIGNING_PROVIDER}</span>
             </p>
 
-            {/* The digest and the record itself — what makes this strip an
-                audit statement rather than a claim. Both come off the signed
-                AuditRecord: a fixture hash prints nothing, and a path the app
-                does not serve is not offered as a link. */}
-            {hash || recordUrl ? (
+            {/*
+             * The digest and the record itself — what makes this strip an
+             * audit statement rather than a claim.
+             *
+             * Both are now stated rather than conditionally hidden. A fixture
+             * hash used to print nothing at all, which left a placeholder row
+             * and a really-signed row looking the same; the prefix is on
+             * screen instead, tinted apart from the value, and the sentence
+             * beside it says what the value is: a SHA-256 over the bytes DWS
+             * signed, or a committed placeholder over nothing. A path the app
+             * does not serve is still never a link — it is named as a recorded
+             * path, which is what it is.
+             */}
+            {hash || recordUrl || recordPath ? (
               <p className="mt-0.5 text-caption text-ink-3">
-                {hash ? <span className="tabular font-mono">{hash}</span> : null}
-                {hash && recordUrl ? " · " : null}
+                {hash ? (
+                  <>
+                    <span className="tabular font-mono">
+                      <span className="text-ink-3">{hash.prefix}</span>
+                      <span className="text-ink-2">{hash.value}</span>
+                    </span>
+                    {hash.placeholder
+                      ? " — committed placeholder, computed over nothing"
+                      : " — SHA-256 of the signed PDF bytes"}
+                  </>
+                ) : null}
+                {hash && (recordUrl || recordPath) ? " · " : null}
                 {recordUrl ? (
                   <a
                     href={recordUrl}
@@ -578,8 +915,14 @@ export default function DecisionBar({
                     rel="noreferrer"
                     className="text-ink-2 underline decoration-line-strong underline-offset-2 hover:text-ink"
                   >
-                    Open signed record
+                    Open signed PDF
                   </a>
+                ) : recordPath ? (
+                  <>
+                    recorded at{" "}
+                    <span className="font-mono break-all">{recordPath}</span>,
+                    which this build does not serve
+                  </>
                 ) : null}
               </p>
             ) : null}
@@ -636,6 +979,24 @@ export default function DecisionBar({
             )}
           </div>
         </div>
+
+        {/*
+         * The chain again, resolved — BELOW the confirmation rather than above
+         * it, because the reviewer reads the decision first and its provenance
+         * second, and because the row above must not move as the bar grows.
+         *
+         * Its numbers are the payoff of the pending state: the same four steps
+         * the bar showed in flight, now each carrying what it actually cost.
+         * A record with no `timings` keeps the steps and loses only the
+         * numbers, and the footnote says which of the two reasons applies —
+         * signed before the chain was instrumented, or a committed fixture
+         * that was never signed at all.
+         */}
+        {chainState ? (
+          <div className="border-t border-line-soft px-5 py-2">
+            <SigningChain state={chainState} />
+          </div>
+        ) : null}
       </div>
     </>
   );

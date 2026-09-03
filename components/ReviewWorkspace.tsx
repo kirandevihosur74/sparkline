@@ -58,7 +58,9 @@
  */
 
 import FindingsQueue from "./FindingsQueue";
-import ReviewDetail from "./ReviewDetail";
+import ReviewDetail, { type PageContext } from "./ReviewDetail";
+import SidePanel, { type SidePanelTab } from "./SidePanel";
+import { useChrome } from "./ChromeProvider";
 import ShortcutSheet from "./ShortcutSheet";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useShortcuts } from "@/hooks/useShortcuts";
@@ -76,6 +78,8 @@ import type {
   FlagStatus,
   QueryTrace,
   RejectReason,
+  SignErrorResponse,
+  SigningStep,
 } from "@/lib/data";
 
 /**
@@ -133,6 +137,23 @@ export interface ReviewWorkspaceProps {
   reviewer?: string;
 }
 
+/**
+ * A signing failure that remembers WHICH STEP broke.
+ *
+ * `throw new Error(body.error)` was what dropped the step: the route sends it
+ * as a field beside the message precisely so the UI does not have to read
+ * structure out of prose, and rebuilding an Error from the message alone threw
+ * that structure away again.
+ */
+class SigningFailure extends Error {
+  readonly step?: SigningStep;
+  constructor(message: string, step?: SigningStep) {
+    super(message);
+    this.name = "SigningFailure";
+    this.step = step;
+  }
+}
+
 export default function ReviewWorkspace({
   reviewId,
   findings,
@@ -148,12 +169,113 @@ export default function ReviewWorkspace({
   const [decisions, setDecisions] = useState<Record<string, SessionDecision>>(
     {},
   );
-  const [signError, setSignError] = useState<Record<string, string>>({});
+  /**
+   * Why the last signature attempt failed, and WHICH OF THE FOUR STEPS broke.
+   *
+   * The step used to be thrown away here: the catch built an Error out of the
+   * message alone, so the field the sign route genuinely sends was discarded
+   * one line after arriving and the decision bar had to say the response did
+   * not name a step. It does name one — signing with no API key answers
+   * `{"error": "...", "step": "convert"}` — and a reviewer being told the
+   * document was converted but could not be signed is a different, more
+   * useful sentence than "signing failed".
+   */
+  const [signError, setSignError] = useState<
+    Record<string, { message: string; step?: SigningStep }>
+  >({});
   const [selectedId, setSelectedId] = useState<string | undefined>(
     // Open on the first finding still waiting on a human; if the run is fully
     // resolved, on the first finding there is.
     () => (findings.find((f) => f.status === "open") ?? findings[0])?.id,
   );
+
+  /**
+   * Show every claim Nutrient DWS extracted from the page on screen, or only
+   * the ones that produced findings. DEFAULT OFF — the reviewer opens on the
+   * work and asks for the rest.
+   *
+   * Owned HERE, at the top of the screen, rather than down in the document
+   * pane where it started. Nothing about the toggle changed; what changed is
+   * who can reach it. The keyboard layer is mounted at this level, and a key
+   * cannot be bound to state living three components below it without
+   * reaching through a ref for a control it cannot see.
+   */
+  const [showAllClaims, setShowAllClaims] = useState(false);
+
+  /**
+   * The document and page ACTUALLY on screen in the pane, as the pane reports
+   * it. Undefined until a page is mounted — there is no page to name before
+   * then, and guessing one would put a number on screen nothing produced.
+   *
+   * Guarded for equality because the pane reports on every render: without the
+   * guard, a report identical to the last would set state, re-render the pane,
+   * and report again.
+   */
+  const [pageContext, setPageContext] = useState<PageContext | undefined>(
+    undefined,
+  );
+  const handlePageContextChange = useCallback((next: PageContext) => {
+    setPageContext((current) =>
+      current &&
+      current.documentId === next.documentId &&
+      current.page === next.page
+        ? current
+        : next,
+    );
+  }, []);
+
+  /**
+   * The analysis panel: whether it is open, and which of its two tabs.
+   *
+   * Open state lives HERE rather than in the panel because three other things
+   * read it — the queue collapses when it opens, the detail column stands its
+   * inline query trace down, and a key toggles it.
+   */
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState<SidePanelTab>("reasoning");
+
+  /** The findings queue, collapsed to its rail. */
+  const [queueCollapsed, setQueueCollapsed] = useState(false);
+
+  /** The app nav's rail, which lives a layout above this screen. */
+  const { navCollapsed, setNavCollapsed } = useChrome();
+
+  /**
+   * Whether the PANEL is what collapsed the queue.
+   *
+   * Opening the panel puts a third column on a screen that had two, so the
+   * queue gives up its width. The prototype did this and never gave it back:
+   * close the panel and the queue stayed a rail, with nothing on screen
+   * explaining why. Here the panel restores what it took — and only what it
+   * took. A reviewer who collapsed the queue themselves and then opened the
+   * panel still has a collapsed queue afterwards, because that was their
+   * choice and the panel never touched it.
+   */
+  const queueTakenByPanel = useRef(false);
+
+  const setPanel = useCallback((open: boolean) => {
+    setPanelOpen(open);
+    if (open) {
+      setQueueCollapsed((collapsed) => {
+        queueTakenByPanel.current = !collapsed;
+        return true;
+      });
+      return;
+    }
+    if (queueTakenByPanel.current) {
+      queueTakenByPanel.current = false;
+      setQueueCollapsed(false);
+    }
+  }, []);
+
+  /**
+   * A reviewer moving the queue by hand takes it back from the panel: after
+   * this, closing the panel leaves the queue where they put it.
+   */
+  const handleQueueCollapsedChange = useCallback((collapsed: boolean) => {
+    queueTakenByPanel.current = false;
+    setQueueCollapsed(collapsed);
+  }, []);
 
   // The queue opens on the state that hides nothing; the model says which.
   const [filterId, setFilterId] = useState<FindingQueueFilterId>(
@@ -259,7 +381,16 @@ export default function ReviewWorkspace({
       decision: Exclude<FlagStatus, "open">,
       reason?: RejectReason,
     ) => {
-      setSignError((current) => ({ ...current, [findingId]: "" }));
+      /* Clear by REMOVING the entry. It used to be set to an empty string,
+         which the old `|| undefined` read downstream turned back into "no
+         error"; with a shape of its own, an empty entry would be an error
+         object claiming a failure with no message. */
+      setSignError((current) => {
+        if (!(findingId in current)) return current;
+        const next = { ...current };
+        delete next[findingId];
+        return next;
+      });
       setDecisions((current) => ({
         ...current,
         [findingId]: { decision, pending: true },
@@ -276,23 +407,33 @@ export default function ReviewWorkspace({
             reviewer: signer,
           }),
         });
-        const body = (await response.json()) as {
+        const body = (await response.json()) as SignErrorResponse & {
           record?: AuditRecord;
-          error?: string;
         };
         if (!response.ok || !body.record) {
-          throw new Error(body.error ?? `Signing failed (HTTP ${response.status}).`);
+          /* Thrown as a value, not an Error: an Error carries a message and
+             nothing else, and the step would not survive the throw. */
+          throw new SigningFailure(
+            body.error ?? `Signing failed (HTTP ${response.status}).`,
+            body.step,
+          );
         }
         setDecisions((current) => ({
           ...current,
           [findingId]: { decision, pending: false, record: body.record },
         }));
       } catch (cause) {
-        // The finding stays open; the bar says why.
+        // The finding stays open; the bar says why, and which step.
         setDecisions((current) => ({ ...current, [findingId]: null }));
         setSignError((current) => ({
           ...current,
-          [findingId]: cause instanceof Error ? cause.message : String(cause),
+          [findingId]:
+            cause instanceof SigningFailure
+              ? { message: cause.message, step: cause.step }
+              : {
+                  message:
+                    cause instanceof Error ? cause.message : String(cause),
+                },
         }));
       }
     },
@@ -484,6 +625,62 @@ export default function ReviewWorkspace({
 
   const hasQueue = visibleFindings.length > 0;
 
+  /**
+   * The panel needs a finding to explain and a page to serialise. `pageContext`
+   * is what the document pane reports once it has mounted a page, so it is
+   * absent only for a finding that records no source location at all — the one
+   * case where the pane returns early and there IS no page. The key is then
+   * unbound and falls through, rather than opening a panel whose Extraction
+   * tab would have nothing to name.
+   */
+  const panelReady = selected !== undefined && pageContext !== undefined;
+
+  /**
+   * Whether the panel is ACTUALLY on screen — the one value both the column
+   * and the detail beside it read.
+   *
+   * These were briefly two separate tests, and the gap between them was a bug:
+   * the detail column stands its inline query trace down while the panel holds
+   * it, so an "open" panel that could not render would have taken the trace
+   * off the screen and put nothing in its place.
+   */
+  const panelShown = panelOpen && panelReady;
+
+  const togglePanel = useCallback(() => {
+    setPanel(!panelOpen);
+  }, [panelOpen, setPanel]);
+
+  const showReasoning = useCallback(() => setPanelTab("reasoning"), []);
+  const showExtraction = useCallback(() => setPanelTab("extraction"), []);
+
+  const toggleNav = useCallback(() => {
+    setNavCollapsed(!navCollapsed);
+  }, [navCollapsed, setNavCollapsed]);
+
+  const toggleQueue = useCallback(() => {
+    handleQueueCollapsedChange(!queueCollapsed);
+  }, [queueCollapsed, handleQueueCollapsedChange]);
+
+  /**
+   * Focus mode is the two rails moving together — one key for "give me the
+   * document", instead of two.
+   *
+   * It COLLAPSES while either is still open and restores only when both are
+   * shut, so the first press always gains room. It deliberately leaves the
+   * hint strip alone: that strip is where E and S are advertised, and F is
+   * sheet-only, so taking it away would leave a reviewer in a state whose way
+   * out is not on screen.
+   */
+  const toggleFocusMode = useCallback(() => {
+    const expanded = !navCollapsed || !queueCollapsed;
+    setNavCollapsed(expanded);
+    handleQueueCollapsedChange(expanded);
+  }, [navCollapsed, queueCollapsed, setNavCollapsed, handleQueueCollapsedChange]);
+
+  const toggleAllClaims = useCallback(() => {
+    setShowAllClaims((shown) => !shown);
+  }, []);
+
   useShortcuts({
     // While the sheet is up, only the keys that dismiss it do anything.
     suspended: sheetOpen,
@@ -494,6 +691,21 @@ export default function ReviewWorkspace({
       approve: openFinding ? approveSelected : undefined,
       reject: openFinding ? rejectSelected : undefined,
       help: toggleSheet,
+      /*
+       * The view keys. Each is undefined exactly when this screen cannot carry
+       * it out, and an undefined handler is not intercepted at all — no
+       * preventDefault, no swallowed keystroke. `1` and `2` are bound only
+       * while the panel is open: they SWITCH a panel, which is what the sheet
+       * says they do, and a key that silently opened one would be doing
+       * something its own description does not claim.
+       */
+      toggleAnalysisPanel: panelReady ? togglePanel : undefined,
+      showReasoning: panelOpen ? showReasoning : undefined,
+      showExtraction: panelOpen ? showExtraction : undefined,
+      toggleNav,
+      toggleQueue: hasQueue ? toggleQueue : undefined,
+      toggleFocusMode: hasQueue ? toggleFocusMode : undefined,
+      toggleAllClaims: selected ? toggleAllClaims : undefined,
       /*
        * NO jumpToSource, and this is settled rather than pending. Jumping the
        * viewer to the selected finding's source page is a thing this build can
@@ -552,6 +764,8 @@ export default function ReviewWorkspace({
             onFilterChange={handleFilterChange}
             selectedId={selected?.id}
             onSelect={setSelectedId}
+            collapsed={queueCollapsed}
+            onCollapsedChange={handleQueueCollapsedChange}
           />
         </div>
 
@@ -570,12 +784,29 @@ export default function ReviewWorkspace({
               signError={
                 selectedDecision === undefined
                   ? undefined
-                  : signError[selected.id] || undefined
+                  : signError[selected.id]?.message
+              }
+              signErrorStep={
+                selectedDecision === undefined
+                  ? undefined
+                  : signError[selected.id]?.step
               }
               onApprove={handleApprove}
               onReject={handleReject}
               onUndo={handleUndo}
               onNext={nextOpenId ? handleNext : undefined}
+              /* The claim boxes drawn over the page are navigation: clicking
+                 one selects that finding, exactly as clicking its queue card
+                 does. Same `setSelectedId` the queue is given above — one
+                 piece of state, two views of it. Without this the boxes render
+                 as inert spans, which is the dead control this project keeps
+                 refusing. */
+              onSelectFinding={setSelectedId}
+              showAllClaims={showAllClaims}
+              onShowAllClaimsChange={setShowAllClaims}
+              onPageContextChange={handlePageContextChange}
+              panelOpen={panelShown}
+              onTogglePanel={panelReady ? togglePanel : undefined}
             />
           </div>
         ) : (
@@ -592,6 +823,29 @@ export default function ReviewWorkspace({
             </p>
           </div>
         )}
+
+        {/*
+         * The third column, and a real one: a flex sibling with a fixed width,
+         * so the document column — `flex-1 min-w-0` — gives up the space
+         * rather than having it drawn over the top. The prototype kept this
+         * panel mounted at zero width and clipped it, which leaves its content
+         * focusable and audible to a screen reader while invisible to
+         * everyone else; a closed panel here is not rendered at all.
+         *
+         * `panelReady` is the same gate the E key is bound on, so the key and
+         * the column can never disagree about whether there is a panel.
+         */}
+        {panelShown ? (
+          <SidePanel
+            finding={selected}
+            reviewId={reviewId}
+            documentId={pageContext.documentId}
+            page={pageContext.page}
+            tab={panelTab}
+            onTabChange={setPanelTab}
+            onClose={() => setPanel(false)}
+          />
+        ) : null}
       </div>
 
       {sheet}

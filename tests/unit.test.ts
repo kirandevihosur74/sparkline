@@ -240,6 +240,59 @@ test("applyLedger overlays decisions onto findings and flags without mutating", 
   assert.equal(applyLedger(run, []), run, "empty ledger returns the same run");
 });
 
+test("applyLedger keeps a countersignature and its decision apart", () => {
+  /*
+   * A flag carries TWO records: the decision, and the countersignature that
+   * endorses it. The merge was keyed on flagId alone, so the two collided and
+   * one was dropped — silently, and only once a ledger existed, because
+   * applyLedger returns early on an empty one. A single unrelated live
+   * signature turned the demo run's four audit records into three.
+   */
+  const decision: AuditRecord = {
+    flagId: "flag-x",
+    reviewer: "M. Bui",
+    decision: "approved",
+    signedAt: "2026-09-01T00:00:00.000Z",
+    contentHash: "sha256:aaa",
+    claimField: "f",
+    claimValue: "v",
+    evidenceSummary: "e",
+  };
+  const countersignature: AuditRecord = {
+    ...decision,
+    reviewer: "P. Ramanathan",
+    signedAt: "2026-09-01T01:00:00.000Z",
+    contentHash: "sha256:bbb",
+    countersigns: {
+      decidedByActorId: "actor-bui",
+      decidedAt: decision.signedAt,
+      label: "Countersigned",
+    },
+  };
+  const run = { ...adaptRun(storedRun()), auditRecords: [decision, countersignature] };
+
+  const unrelated: AuditRecord = { ...decision, flagId: "flag-y", contentHash: "sha256:ccc" };
+  const both = applyLedger(run, [unrelated]);
+  assert.equal(both.auditRecords.length, 3, "the endorsement survives an unrelated signature");
+
+  /* A real signature still REPLACES the fixture decision for its own flag —
+     that is what this merge is for — and still leaves the endorsement alone.
+     The sign route never sets `countersigns`, so a live row is always a
+     decision. */
+  const real: AuditRecord = { ...decision, contentHash: "sha256:real", reviewer: "K. Shah" };
+  const replaced = applyLedger(run, [real]);
+  assert.equal(replaced.auditRecords.length, 2);
+  assert.equal(
+    replaced.auditRecords.find((r) => !r.countersigns)?.reviewer,
+    "K. Shah",
+    "the live decision replaced the fixture one",
+  );
+  assert.ok(
+    replaced.auditRecords.some((r) => r.countersigns),
+    "the countersignature is still there",
+  );
+});
+
 test("orderFindings and deltaLabel are stable helpers", () => {
   const run = adaptRun(storedRun());
   assert.deepEqual(orderFindings([...run.findings].reverse()), run.findings);
@@ -248,6 +301,109 @@ test("orderFindings and deltaLabel are stable helpers", () => {
     "Δ 10 MW · 4%"
   );
   assert.equal(deltaLabel(claim({ value: "Q4 2027" }), claim({ value: "Q1 2028" })), "values differ");
+});
+
+// ---------------------------------------------------------------------------
+// Signing chain — timing measurement and step attribution.
+//
+// signDecision() itself is NOT tested here: it makes real DWS calls over the
+// network and writes to data/. Its timing and error-attribution behaviour is
+// entirely in elapsedMsSince/timeStep, which are exported for exactly that
+// reason, and the risk it introduces (a ledger row that now may or may not
+// carry `timings`) is covered against applyLedger below.
+// ---------------------------------------------------------------------------
+import { elapsedMsSince, SignError, timeStep } from "../lib/runs/records";
+import type { SigningTimings } from "../lib/types";
+
+test("elapsedMsSince rounds to whole milliseconds off a monotonic clock", () => {
+  const now = performance.now();
+  assert.equal(elapsedMsSince(now - 1234.6), 1235);
+  assert.equal(elapsedMsSince(now - 0.4), 0);
+  const measured = elapsedMsSince(performance.now());
+  assert.ok(Number.isInteger(measured), "whole milliseconds only");
+  assert.ok(measured >= 0, "a monotonic clock never runs backwards");
+});
+
+test("timeStep returns the step's value alongside a measured duration", async () => {
+  const { value, ms } = await timeStep("hash", () => "sha256:abc");
+  assert.equal(value, "sha256:abc");
+  assert.ok(Number.isInteger(ms) && ms >= 0);
+
+  const awaited = await timeStep("convert", async () => {
+    await new Promise((resolve) => setTimeout(resolve, 12));
+    return 7;
+  });
+  assert.equal(awaited.value, 7);
+  assert.ok(awaited.ms >= 10, `expected ~12ms, measured ${awaited.ms}ms`);
+});
+
+test("timeStep attributes a throw to its step without swallowing the reason", async () => {
+  const original = new Error("DWS convert refused: 415 unsupported media type");
+  const failed = await timeStep("convert", () => {
+    throw original;
+  }).then(
+    () => undefined,
+    (error: unknown) => error
+  );
+  assert.ok(failed instanceof SignError);
+  assert.equal(failed.step, "convert");
+  assert.equal(failed.message, original.message, "original message survives");
+  assert.equal(failed.cause, original, "original error kept as cause");
+  assert.equal(failed.status, 500, "a step failure is a 500");
+});
+
+test("SignError carries no step when nothing had started", () => {
+  const notFound = new SignError("No review with id nope", 404);
+  assert.equal(notFound.step, undefined);
+  assert.equal(notFound.status, 404);
+});
+
+test("applyLedger preserves the timings on a signed ledger row", () => {
+  const run = adaptRun(storedRun());
+  const timings: SigningTimings = {
+    convertMs: 812,
+    signMs: 1394,
+    hashMs: 1,
+    storeMs: 3,
+    totalMs: 2216,
+  };
+  const record: AuditRecord = {
+    flagId: "contradiction:EXPANSION_INSTALL_COST",
+    reviewer: "K",
+    decision: "approved",
+    signedAt: "2026-09-02T05:10:00.000Z",
+    contentHash: "sha256:abc",
+    claimField: "f",
+    claimValue: "v",
+    evidenceSummary: "e",
+    timings,
+  };
+  const overlaid = applyLedger(run, [record]);
+  const merged = overlaid.auditRecords.find((r) => r.flagId === record.flagId);
+  assert.deepEqual(merged?.timings, timings, "merge must not drop measured timings");
+  // Independently measured, so the remainder is real overhead — never zero by
+  // construction. The UI may show it; it may not reconstruct totalMs by adding.
+  const parts = timings.convertMs + timings.signMs + timings.hashMs + timings.storeMs;
+  assert.equal(timings.totalMs - parts, 6);
+});
+
+test("a ledger row written before timings existed still parses and merges", () => {
+  // Verbatim shape of a row already on disk in data/ledgers/<id>.json: no
+  // `timings` key at all. Backward compatibility is the risk this change
+  // introduces, so it is asserted through JSON, not a hand-built object.
+  const onDisk = JSON.parse(
+    `[{"flagId":"contradiction:EXPANSION_INSTALL_COST","reviewer":"K",` +
+      `"decision":"approved","signedAt":"2026-09-02T05:10:00.000Z",` +
+      `"contentHash":"sha256:abc","claimField":"f","claimValue":"v",` +
+      `"evidenceSummary":"e"}]`
+  ) as AuditRecord[];
+  const run = adaptRun(storedRun());
+  const overlaid = applyLedger(run, onDisk);
+  const merged = overlaid.auditRecords.find((r) => r.flagId === onDisk[0].flagId);
+  assert.ok(merged, "old row still merges");
+  assert.equal(merged.timings, undefined, "no timings is absence, not zeroes");
+  assert.equal(merged.decision, "approved", "the rest of the row is unaffected");
+  assert.equal(overlaid.findings[1].status, "approved");
 });
 
 // ---------------------------------------------------------------------------

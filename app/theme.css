@@ -67,6 +67,9 @@
   /* ── semantic: verified / approved / agreed ──────────────── */
   --color-accent: #1b5e4b;
   --color-accent-soft: #e8f1ee;
+  /* The missing sibling of `warn-line` and `alert-line`: the 1px rule on a
+     tinted accent surface (the claim strip under the document toolbar). */
+  --color-accent-line: #cfe1da;
 
   /* ── semantic: stale / caution / degraded ────────────────── */
   --color-warn: #8a6410;
@@ -152,6 +155,55 @@
   /* ── fixed layout widths ─────────────────────────────────── */
   --spacing-rail: 188px;   /* app nav */
   --spacing-queue: 392px;  /* findings queue column */
+
+  /* Collapsed counterparts. Each column keeps a rail rather than
+     disappearing, because a column that vanishes takes its own
+     way back with it — the reviewer would have to know a key.
+     The rail is narrow enough to buy the document real width and
+     wide enough to hold the affordance that reopens it.         */
+  --spacing-rail-min: 52px;   /* app nav, collapsed */
+  --spacing-queue-min: 46px;  /* findings queue, collapsed to dots */
+  --spacing-panel: 384px;     /* reasoning / extraction side panel */
+
+  /* The source document's FLOOR, not its height.
+     The pane takes whatever height the finding header and the evidence
+     leave it, which on a tall screen is most of the column. This is the
+     point below which it stops giving way and the column scrolls
+     instead — because a document pane squeezed under its own toolbar
+     is not a smaller document, it is no document.                     */
+  --spacing-doc-min: 560px;
+
+  /* The pane's own floor, strictly BELOW --spacing-doc-min so the two can
+     never argue. It binds only if the pane is ever shorter than the chrome
+     around it.                                                          */
+  --spacing-doc-floor: 320px;
+}
+
+/* ── the document sheet ──────────────────────────────────────
+   The marked-text facsimile is a PAGE, not UI, so it does not
+   take its type off the UI scale — it only used to because
+   there was nowhere else to take it from.
+
+   15.5px is measured, not chosen: at the old 12.5px the sheet
+   could not both fill the column and stay readable (80 cpl
+   caps it near 660px and still leaves ~28% of the column
+   empty). It also has to agree with the OTHER view of the same
+   page — a letter page at fit-to-width across this column is
+   scaled ~1.47x, putting 11pt body copy on screen near 16px —
+   and a facsimile that redrew the same page smaller would
+   shrink the evidence on the way between the two tabs.
+
+   720px is the widest sheet still inside the 45–75 character
+   band on average (66 avg, 78 max at this size). 760 gives 86
+   at the maximum, 800 gives 89, uncapped gives 99.
+
+   Leading is unitless so it scales with the size: the gap
+   between line boxes grew 10.6px -> 13.2px, which is more room
+   for a claim's label, not less.                             */
+@theme {
+  --text-doc: 15.5px;
+  --leading-doc: 1.85;
+  --sheet-width: 720px;
 }
 
 /* ── light chrome + shadow colour ────────────────────────────
@@ -223,6 +275,7 @@
   /* verified / approved / agreed */
   --dark-accent: #5cbf9d;
   --dark-accent-soft: #142c25;
+  --dark-accent-line: #28584a;
 
   /* stale / caution / degraded */
   --dark-warn: #d7ab5c;
@@ -278,6 +331,7 @@
 
     --color-accent: var(--dark-accent);
     --color-accent-soft: var(--dark-accent-soft);
+    --color-accent-line: var(--dark-accent-line);
 
     --color-warn: var(--dark-warn);
     --color-warn-soft: var(--dark-warn-soft);
@@ -320,6 +374,7 @@
 
   --color-accent: var(--dark-accent);
   --color-accent-soft: var(--dark-accent-soft);
+  --color-accent-line: var(--dark-accent-line);
 
   --color-warn: var(--dark-warn);
   --color-warn-soft: var(--dark-warn-soft);

@@ -395,9 +395,29 @@ export function applyLedger(run: RunData, ledger: AuditRecord[]): RunData {
     return record ? { ...flag, status: record.decision } : flag;
   });
 
+  /*
+   * Keyed by flag AND ROLE, not by flag alone.
+   *
+   * A flag can carry two records: the decision, and the countersignature that
+   * endorses it. Keying on `flagId` made those two the same entry, so the
+   * countersignature overwrote the decision and one of the pair was dropped —
+   * silently, and only once a ledger existed, because this function returns
+   * early when the ledger is empty. The demo run holds four records across two
+   * flags; a single unrelated live signature turned that into three.
+   *
+   * On an audit trail that is the worst loss available: the row recording who
+   * endorsed a decision, deleted by the arrival of an unrelated one.
+   *
+   * A live signature is always a decision — the sign route sets no
+   * `countersigns` — so a real row still replaces the fixture DECISION for its
+   * flag, which is the replacement this merge is for, and leaves the
+   * endorsement alone.
+   */
+  const roleOf = (r: AuditRecord) =>
+    `${r.flagId}\u0000${r.countersigns ? "countersign" : "decision"}`;
   const merged = new Map<string, AuditRecord>();
-  for (const r of run.auditRecords) merged.set(r.flagId, r);
-  for (const r of ledger) merged.set(r.flagId, r);
+  for (const r of run.auditRecords) merged.set(roleOf(r), r);
+  for (const r of ledger) merged.set(roleOf(r), r);
   const auditRecords = [...merged.values()].sort((a, b) =>
     a.signedAt.localeCompare(b.signedAt)
   );

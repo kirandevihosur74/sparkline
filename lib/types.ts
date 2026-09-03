@@ -158,6 +158,47 @@ export interface AnalysisResult {
   liveCheckFailure?: LiveCheckFailure;
 }
 
+/**
+ * Which step of signing a record was in. Ordered as they run:
+ * Markdown → PDF (DWS convert) → signature (DWS sign) → SHA-256 → disk.
+ */
+export type SigningStep = "convert" | "sign" | "hash" | "store";
+
+/**
+ * Wall-clock milliseconds per step, MEASURED server-side during signing by
+ * signDecision() (lib/runs/records.ts) off a monotonic clock.
+ *
+ * Absent on any record signed before this was instrumented, and on every
+ * fixture record — which is the point: a record with no timings shows none.
+ * Nothing here may be reconstructed, defaulted or estimated on the client.
+ */
+export interface SigningTimings {
+  /** Markdown → PDF over the network: DWS convert. */
+  convertMs: number;
+  /** Digital signature applied over the network: DWS sign. */
+  signMs: number;
+  /** SHA-256 over the signed PDF bytes, in-process. */
+  hashMs: number;
+  /**
+   * The signed PDF written to disk.
+   *
+   * NOT the ledger append, despite the step's name: the ledger append
+   * serializes the very record that carries this number, so no duration it
+   * produced could be inside itself. The append is still ATTRIBUTED to the
+   * "store" step when it throws — it is only untimeable, not unnamed.
+   */
+  storeMs: number;
+  /**
+   * End to end, server-side: from entering signDecision() to the last byte on
+   * disk. Measured independently, NEVER summed from the four fields above —
+   * a total defined as the sum of its parts can never reveal the overhead
+   * between them (argument validation, Markdown assembly, promise scheduling,
+   * GC). totalMs − (convert+sign+hash+store) is that unattributed remainder,
+   * and it is a real number worth seeing.
+   */
+  totalMs: number;
+}
+
 /** Beat 3 — a human decision, backed by a DWS digital signature. */
 export interface ReviewRecord {
   flagId: string;
@@ -172,6 +213,14 @@ export interface ReviewRecord {
   reason?: string;
   /** Reviewer's own words. */
   note?: string;
+  /**
+   * What the signing chain actually cost, measured while it ran.
+   *
+   * OPTIONAL and must stay optional: ledger rows written to
+   * data/ledgers/<reviewId>.json before this was instrumented have no
+   * `timings` key and must keep parsing unchanged.
+   */
+  timings?: SigningTimings;
 }
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,36 @@ import { useThemeStamp } from "./ThemeToggle";
  * Reusable: drop into any container with a resolved height (h-full +
  * min-h-0 parent, or an explicit height) and pass the document URL.
  *
+ * ── HOW TALL THIS IS, AND WHO DECIDES ───────────────────────────────────────
+ *
+ * The parent decides; this component only refuses to disappear. The shell is
+ * `flex-1 h-full min-h-doc-floor`, which is three answers to three parents:
+ *
+ *   · a flex COLUMN pane with a resolved height — `flex-1` takes whatever is
+ *     left after the toolbar and the claim strip, so the document is as tall
+ *     as the screen allows and nothing here has to guess a number;
+ *   · a plain sized block — `flex-1` is inert there and `h-full` fills it;
+ *   · a parent with no resolved height at all — a percentage flex-basis
+ *     against an indefinite main size falls back to the CONTENT size, so the
+ *     shell keeps growing the way it always did rather than collapsing.
+ *
+ * The floor USED TO BE the whole story: the shell was `h-full min-h-[480px]`
+ * under a parent that gave `h-full` nothing to resolve against, so 480px won
+ * at every viewport height and a US-Letter page was read through a 430px slot
+ * — 43% of one page. The floor is now the last resort rather than the answer,
+ * and it is deliberately SMALL: 320px leaves ~270px of page under the SDK's
+ * ~49px toolbar, and it is low enough that it only binds when the pane is
+ * shorter than the chrome around it. A floor that argued with a real parent
+ * height would be this file making a layout decision that is not its to make.
+ *
+ * TODO(token-gap: --spacing-doc-min): 320 is the one number in this file that
+ * app/theme.css cannot supply — the scale carries fixed COLUMN widths
+ * (--spacing-rail, --spacing-queue, --spacing-panel) and no height token. The
+ * marked-text rendition (components/ClaimBoxOverlay.tsx) states the same floor
+ * for the same reason, and the two must move together: a pane that changed
+ * height when the reviewer switched views would be the screen flinching at a
+ * question about the evidence.
+ *
  * ── PAGE NUMBERING: 1-BASED IN, 0-BASED DOWN ────────────────────────────────
  *
  * The domain is 1-based. `ClaimSource.page` is what a reviewer reads off the
@@ -69,6 +99,36 @@ import { useThemeStamp } from "./ThemeToggle";
  * a PDF's white is ink-on-paper, and inverting it would misreport the source
  * we are asking a reviewer to trust. There is no page-invert or night-mode
  * option in the SDK's typings, and we would not want one here.
+ *
+ * ── NOTHING IS DRAWN ON TOP OF THIS VIEWER, AND WHY ─────────────────────────
+ *
+ * The claim boxes (components/ClaimBoxOverlay.tsx) mark the words each claim
+ * was extracted from. They are NOT an absolutely-positioned layer over this
+ * component, and adding one would be wrong twice over:
+ *
+ *   · THERE ARE NO COORDINATES TO DRAW AT. `ClaimBox.bbox` is absent on every
+ *     box this build ships. DWS json-content does return bboxes and
+ *     lib/nutrient.ts drops them in three places — the full statement is
+ *     TODO(schema-gap: bbox) in lib/data/types.ts. A layer positioned by
+ *     left/top percentages over a rendered page would be inventing the one
+ *     number the pipeline never kept, and it would be inventing it over the
+ *     document a reviewer signs against.
+ *   · THIS COMPONENT DOES NOT OWN THE GEOMETRY IT RENDERS. The SDK mounts into
+ *     a shadow root on `.PSPDFKit-Container` and keeps its own scroll
+ *     container, spread layout and zoom inside it. Our DOM has no stable
+ *     relationship to any of that: an overlay would have to re-measure
+ *     `.PSPDFKit-Page` through the shadow boundary on every scroll, zoom,
+ *     resize, spread change and page change, and would drift by exactly one
+ *     frame's worth of lag each time — worst at the zoom levels a reviewer
+ *     uses to read a figure, which is when a box being one line off is a
+ *     misreport rather than a wobble.
+ *
+ * So ReviewDetail's document pane mounts EITHER this viewer OR the marked-text
+ * rendition, never one over the other, and this file stays what it is: the
+ * source PDF, rendered, with nothing of ours painted on it. When ClaimSource
+ * grows real rects in a named unit, the honest way in is the SDK's own
+ * annotation API (which lives inside the same shadow root and moves with the
+ * page), not a `position:absolute` div of ours.
  *
  * Re-applying the THEME still costs a reload: the theme is load configuration
  * and the SDK exposes no runtime setter (nothing like `setTheme` on the
@@ -208,6 +268,29 @@ export default function ViewerEmbed({
            thing we would do by hand. */
         initialViewState: new NutrientViewer.ViewState({
           currentPageIndex: toPageIndex(pageRef.current),
+          /* THE PAGE TAKES THE COLUMN. Left at its default (ZoomMode.AUTO)
+             the SDK picks a zoom for "the best viewing experience" in the
+             abstract, which in this pane rendered a 765px page inside a 940px
+             viewport — 175px of empty gutter, 18.6% of the width the document
+             was given. FIT_TO_WIDTH is documented as "fit the width of the
+             broadest page into the viewport; the height might overflow", and
+             overflowing height is exactly what a continuous document is for.
+
+             Note the SDK's own caveat: "Using a ZoomMode will override the
+             padding set using ViewState#viewportPadding". So `viewportPadding`
+             and `spreadSpacing` are deliberately NOT set here — setting them
+             beside a ZoomMode would be writing down a number the SDK then
+             ignores. */
+          zoom: NutrientViewer.ZoomMode.FIT_TO_WIDTH,
+          /* STATED, NOT INHERITED. Both of these are already the SDK's
+             defaults in v1.21 (CONTINUOUS, SINGLE). They are written down
+             anyway because they are what makes this pane read as a document —
+             one column of pages you scroll through, not a paged widget — and
+             an SDK bump that moved either default would silently change how a
+             reviewer reads the evidence. A default is a fact about a version;
+             this is a decision about the screen. */
+          scrollMode: NutrientViewer.ScrollMode.CONTINUOUS,
+          layoutMode: NutrientViewer.LayoutMode.SINGLE,
         }),
         /* No stamp is "System", and the SDK's AUTO reads
            prefers-color-scheme itself — the same rule theme.css follows for
@@ -281,7 +364,13 @@ export default function ViewerEmbed({
   );
 
   return (
-    <div className="relative h-full min-h-[480px] w-full overflow-hidden rounded border border-line bg-surface">
+    /* THE SHELL TAKES THE HEIGHT IT IS GIVEN. See HOW TALL THIS IS above:
+       `flex-1` claims the leftover height of a flex-column pane, `h-full`
+       covers the case where the pane hands this component a sized block
+       instead, and the floor is the last resort so the viewer is never a slit.
+       `min-h-0` is deliberately absent: it would let a flex parent with no
+       resolved height collapse this to nothing. */
+    <div className="relative h-full min-h-doc-floor w-full flex-1 overflow-hidden rounded border border-line bg-surface">
       <div ref={containerRef} className="absolute inset-0" />
       {!ready && !error && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
