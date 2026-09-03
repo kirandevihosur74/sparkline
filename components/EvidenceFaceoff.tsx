@@ -195,38 +195,45 @@ export function StalenessFaceoff({
  * rail being collapsed. A `md:` breakpoint would stack a 900px-wide strip and
  * leave a 400px one side-by-side. The container sees the width that exists.
  *
- * Wide (>= 480px): document · delta · comparison, side by side, because the
+ * Wide (>= 560px): document · delta · comparison, side by side, because the
  * comparison IS the argument and reading it across is what makes it one.
  *
- * Narrow (< 480px): the same three cells stacked, in the same reading order —
+ * Narrow (< 560px): the same three cells stacked, in the same reading order —
  * the document's claim, the delta, then what it is measured against.
  *
- * 480px IS A MEASURED LINE, not a taste. Stacking is not free: this strip sits
- * above the source document in a column whose scarce resource is vertical, so
- * the rule is to stack only where side-by-side has stopped paying for itself.
- * Measured on both face-offs the demo run produces, stacked height minus
- * side-by-side height at the same strip width:
+ * 560px IS A MEASURED LINE, not a taste: it is the last width at which the
+ * DELTA VALUE still sets on one line in both face-offs the demo run produces.
+ * Sweeping strip width in 10px steps, the delta cell's own value ("≠ changed",
+ * "Δ $25M · 13.4%") holds one line down to 570px and breaks in two below it —
+ * and a hinge that reads "Δ $25M ·" over "13.4%" has stopped being the number
+ * the whole comparison is about. The evidence columns are ~206px there, a
+ * ~28-character line of serif excerpt, so the two failures arrive together.
  *
- *     strip width   530    510    490    470    450    430
- *     staleness     +15    +15     -1    -23    -40    -61
- *     contradiction +85    +66    +50    +50    +30    +11
+ * STACKING IS NOT FREE, which is why the line sits as low as it does. This
+ * strip is above the source document in a column whose scarce resource is
+ * vertical, and stacked height minus side-by-side height at the same strip
+ * width measures:
  *
- * Around 480–490 the staleness face-off crosses over — the stacked form starts
- * being the SHORTER one — and the evidence columns have fallen to ~180px, a
- * ~25-character line for a serif excerpt, which is where reading the comparison
- * across stops working anyway. Above it, side-by-side is both shorter and
- * legible, so it stays.
+ *     strip width   570    530    490    450    410
+ *     staleness     +57    +15     -1    -40    -81
+ *     contradiction +85    +85    +50    +30     -9
+ *
+ * So side-by-side is the SHORTER form everywhere above ~490px, and it is kept
+ * everywhere it is also legible. The 560–490 band is the one place the strip
+ * spends height on purpose — up to 85px — because the alternative there is a
+ * broken delta and a 25-character evidence column.
  *
  * THE DELTA TRACK IS BOUNDED. It used to be a raw `auto` — content-sized, and
  * therefore giving up nothing: measured at a flat 167px from 1920 all the way
  * down to 1024 while the evidence columns it sits between collapsed to 117px
  * around it, so the least informative cell became the widest one. It is now
- * `minmax(min-content, min(11rem, 22%))`: 11rem/176px clears the
- * widest state label the two face-offs produce (max-content measures 167px and
- * 172px), so there is nothing to gain above it; 22% is the invariant that
- * matters, because 22% can never beat the 39% each evidence column gets. The
- * `min-content` floor is what stops the cap from squeezing the cell below its
- * own longest word.
+ * `minmax(min-content, min(11rem, 26%))`. 11rem/176px clears the widest cell
+ * the two face-offs produce (max-content measures 167px and 172px), so there
+ * is nothing to gain above it. 26% is the invariant that matters: 26% can
+ * never beat the 37% each evidence column gets, whatever a future delta label
+ * says, and it is still wide enough to keep the value on one line everywhere
+ * the strip stays side by side. The `min-content` floor stops the cap from
+ * squeezing the cell below its own longest word.
  *
  * (`min()` cannot take `max-content` — CSS math functions reject intrinsic
  * keywords — so the upper bound is the measured pixel value, not the keyword.)
@@ -243,7 +250,7 @@ function Strip({
       aria-label={`Evidence face-off: ${label}`}
       className="@container/faceoff rounded border border-line bg-surface"
     >
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(min-content,min(11rem,22%))_minmax(0,1fr)] items-stretch @max-[480px]/faceoff:grid-cols-1">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(min-content,min(11rem,26%))_minmax(0,1fr)] items-stretch @max-[560px]/faceoff:grid-cols-1">
         {children}
       </div>
     </section>
@@ -276,7 +283,7 @@ function Side({
   // than a narrow column does — in this column every pixel a strip takes is a
   // pixel off the source document below it.
   return (
-    <div className="flex min-w-0 flex-col gap-3 px-5 py-4 @max-[480px]/faceoff:gap-2.5 @max-[480px]/faceoff:py-3">
+    <div className="flex min-w-0 flex-col gap-3 px-5 py-4 @max-[560px]/faceoff:gap-2.5 @max-[560px]/faceoff:py-3">
       <div className="flex min-w-0 flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="min-w-0 truncate text-label font-medium text-ink">
@@ -352,22 +359,25 @@ function Gap({
     <div
       className={[
         // Side by side: a centred column between the two sides.
-        "flex flex-col items-center justify-center gap-1.5 px-5 py-4 text-center",
+        // px-4 side by side (the narrower the strip, the more the 40px of
+        // padding cost the delta's own words), px-5 stacked to line its text
+        // up with the two sides above and below it.
+        "flex flex-col items-center justify-center gap-1.5 px-4 py-4 text-center",
         "border-x border-line",
         // Stacked: the hinge of the comparison, laid out ACROSS the strip —
         // "Change · ≠ changed" on the left, the state on the right. The
         // dividers rotate with the layout: a border-x between three columns is
         // a border-y between three rows, or the cell reads as a stray rule.
-        "@max-[480px]/faceoff:flex-row @max-[480px]/faceoff:flex-wrap",
-        "@max-[480px]/faceoff:items-baseline @max-[480px]/faceoff:justify-between",
-        "@max-[480px]/faceoff:gap-x-4 @max-[480px]/faceoff:gap-y-1.5",
-        "@max-[480px]/faceoff:border-x-0 @max-[480px]/faceoff:border-y",
-        "@max-[480px]/faceoff:px-5 @max-[480px]/faceoff:py-3 @max-[480px]/faceoff:text-left",
+        "@max-[560px]/faceoff:flex-row @max-[560px]/faceoff:flex-wrap",
+        "@max-[560px]/faceoff:items-baseline @max-[560px]/faceoff:justify-between",
+        "@max-[560px]/faceoff:gap-x-4 @max-[560px]/faceoff:gap-y-1.5",
+        "@max-[560px]/faceoff:border-x-0 @max-[560px]/faceoff:border-y",
+        "@max-[560px]/faceoff:px-5 @max-[560px]/faceoff:py-3 @max-[560px]/faceoff:text-left",
       ].join(" ")}
     >
       {/* Caption and delta stay one unit: stacked when the cell is a column,
           on one baseline when it is a row. */}
-      <span className="flex flex-col items-center gap-1.5 @max-[480px]/faceoff:flex-row @max-[480px]/faceoff:items-baseline @max-[480px]/faceoff:gap-2.5">
+      <span className="flex flex-col items-center gap-1.5 @max-[560px]/faceoff:flex-row @max-[560px]/faceoff:items-baseline @max-[560px]/faceoff:gap-2.5">
         <span className="text-micro text-ink-3 uppercase">{caption}</span>
         <span className={`tabular text-title font-medium ${text}`}>{delta}</span>
       </span>
