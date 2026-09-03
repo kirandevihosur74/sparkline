@@ -36,6 +36,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import ThemeToggle from "./ThemeToggle";
+import { useChrome } from "./ChromeProvider";
 import {
   DEMO_REVIEW_ID,
   getAuditRecords,

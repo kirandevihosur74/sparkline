@@ -58,7 +58,7 @@
  */
 
 import FindingsQueue from "./FindingsQueue";
-import ReviewDetail from "./ReviewDetail";
+import ReviewDetail, { type PageContext } from "./ReviewDetail";
 import ShortcutSheet from "./ShortcutSheet";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useShortcuts } from "@/hooks/useShortcuts";
@@ -154,6 +154,41 @@ export default function ReviewWorkspace({
     // resolved, on the first finding there is.
     () => (findings.find((f) => f.status === "open") ?? findings[0])?.id,
   );
+
+  /**
+   * Show every claim Nutrient DWS extracted from the page on screen, or only
+   * the ones that produced findings. DEFAULT OFF — the reviewer opens on the
+   * work and asks for the rest.
+   *
+   * Owned HERE, at the top of the screen, rather than down in the document
+   * pane where it started. Nothing about the toggle changed; what changed is
+   * who can reach it. The keyboard layer is mounted at this level, and a key
+   * cannot be bound to state living three components below it without
+   * reaching through a ref for a control it cannot see.
+   */
+  const [showAllClaims, setShowAllClaims] = useState(false);
+
+  /**
+   * The document and page ACTUALLY on screen in the pane, as the pane reports
+   * it. Undefined until a page is mounted — there is no page to name before
+   * then, and guessing one would put a number on screen nothing produced.
+   *
+   * Guarded for equality because the pane reports on every render: without the
+   * guard, a report identical to the last would set state, re-render the pane,
+   * and report again.
+   */
+  const [pageContext, setPageContext] = useState<PageContext | undefined>(
+    undefined,
+  );
+  const handlePageContextChange = useCallback((next: PageContext) => {
+    setPageContext((current) =>
+      current &&
+      current.documentId === next.documentId &&
+      current.page === next.page
+        ? current
+        : next,
+    );
+  }, []);
 
   // The queue opens on the state that hides nothing; the model says which.
   const [filterId, setFilterId] = useState<FindingQueueFilterId>(
@@ -583,6 +618,9 @@ export default function ReviewWorkspace({
                  as inert spans, which is the dead control this project keeps
                  refusing. */
               onSelectFinding={setSelectedId}
+              showAllClaims={showAllClaims}
+              onShowAllClaimsChange={setShowAllClaims}
+              onPageContextChange={handlePageContextChange}
             />
           </div>
         ) : (

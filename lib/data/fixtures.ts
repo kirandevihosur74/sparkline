@@ -3935,8 +3935,27 @@ export function getComplianceCopy(): ComplianceCopy {
 //   of Enter to duplicate a control that is on screen and already keyboard-
 //   reachable. The binding stays refused; the affordance is the button.
 //
-// WHY GLOBAL HOLDS ONE KEY. "?" opens the sheet and that is the whole group.
-// The two candidates were considered and declined:
+// WHAT GLOBAL HOLDS, AND WHY THE VIEW KEYS LANDED THERE. There are three
+// groups and they are the three the sheet's sections are: `selection` MOVES
+// THE QUEUE SELECTION, `review` DECIDES THE FINDING IN FRONT OF YOU, and
+// `global` is everything that does neither. The view controls — the analysis
+// panel and its two tabs, the two rails, focus mode, and the claim overlay —
+// change what the screen SHOWS without touching which finding is selected or
+// what has been signed about it, so `global` is the only group whose meaning
+// they fit. Two consequences, both wanted:
+//
+//   DecisionBar joins its Approve and Reject kbd chips by searching group
+//   `review` for a description opening with the button's own verb. Anything
+//   filed under `global` is invisible to that search and cannot hijack a
+//   decision button's chip, however its description is worded.
+//
+//   The same bar drops the whole `review` group from the hint strip once a
+//   finding is signed, because there is no enabled Approve or Reject left to
+//   press. A view key still works on a signed finding — the panel still opens,
+//   the rails still collapse — so filing these under `review` would have
+//   un-advertised keys that keep working. Under `global` they stay listed.
+//
+// STILL REFUSED, and not for want of a group to put them in:
 //
 //   The theme toggle is a THREE-state control — Light / Dark / System, where
 //   System is a real position and not the absence of one. A single key can
@@ -3948,7 +3967,9 @@ export function getComplianceCopy(): ComplianceCopy {
 //
 //   Navigation between screens would need a chord vocabulary — a lead key and
 //   a destination — that nothing in this app implements or teaches, to save a
-//   click on a nav rail that is on screen at all times.
+//   click on a nav rail that is on screen at all times. Note that "[" below
+//   COLLAPSES that rail and does not navigate with it: changing a rail's width
+//   is one state on one screen, where choosing a destination is a vocabulary.
 //
 // Inventing either to make the group look fuller would put keys on the sheet
 // that the build does not honour, which is the one thing this list exists to
@@ -3973,16 +3994,31 @@ const SHORTCUT_GROUP_ORDER: readonly ShortcutGroupId[] = [
 type ShortcutSpec = Omit<Shortcut, "text">;
 
 /**
- * The five bindings, in the order the sheet and the strip read them.
+ * The twelve bindings, in the order the sheet and the strip read them.
  *
  * `hint` is a gate, not decoration: the hint strip renders on the review
  * screen alone, so a binding may only be flagged when it does what it says on
- * THAT screen. Every shipped binding passes today — J/K move the queue
- * selection, A and R drive the decision bar, ? opens the sheet from anywhere,
- * the review screen included — because the two bindings that would not have
- * passed were refused above rather than printed. A later binding that works
- * only on the audit or analysis screen goes in the sheet with `hint: false`
- * and the strip never mentions it.
+ * THAT screen. Every binding below passes that test — the two that would not
+ * have were refused above rather than printed — so the flag is not deciding
+ * what is TRUE here, it is deciding what is WORTH ONE LINE.
+ *
+ * WHICH SEVEN EARN A CHIP. The strip is a single ~28px row whose height comes
+ * out of the scrolling evidence above it, and it wraps rather than scrolls, so
+ * a twelfth chip does not overflow — it steals a second row from the document.
+ * The flag therefore goes to the keys a reviewer uses ON EVERY FINDING: J and
+ * K to move, A and R to decide, E to open the analysis panel and S to show
+ * every claim box — the two view keys that are part of reading a finding — and
+ * ? to reach everything else. That last chip is what makes the remaining five
+ * discoverable, which is why the answer to "1 and 2 are undiscoverable" is the
+ * sheet and not a longer strip.
+ *
+ * WHICH FIVE ARE SHEET-ONLY, and why that is not a demotion. "1" and "2" pick
+ * a tab inside a panel that "E" has to open first; a reviewer who has not
+ * pressed E has nothing for them to switch, and one who has can see both tabs
+ * labelled on screen. "[" and "]" set a rail width and "F" sets both at once —
+ * per-session layout preferences, pressed once and left, not per-finding
+ * moves. All five are real, all five are on the sheet, and none of them is
+ * worth a permanent line of the document's height.
  */
 const SHORTCUT_SPECS: readonly ShortcutSpec[] = [
   {
@@ -4013,6 +4049,71 @@ const SHORTCUT_SPECS: readonly ShortcutSpec[] = [
     key: "R",
     description: "Reject the selected finding, then choose a reason",
     group: "review",
+    hint: true,
+  },
+  {
+    /*
+     * "Show or hide", not "open": the key is a toggle and the description says
+     * so, because a reviewer who reads "Open the analysis panel" and presses E
+     * on an open panel would watch it close.
+     */
+    key: "E",
+    description: "Show or hide the analysis panel",
+    group: "global",
+    hint: true,
+  },
+  {
+    /*
+     * The tab keys name the tabs the panel labels on screen. They SWITCH a
+     * panel rather than promising to open one: what an unopened panel does
+     * with "1" is the review screen's decision, and a description here that
+     * promised "open the panel on Reasoning" would be this list committing the
+     * screen to behaviour it may not have.
+     */
+    key: "1",
+    description: "Switch the analysis panel to Reasoning",
+    group: "global",
+    hint: false,
+  },
+  {
+    key: "2",
+    description: "Switch the analysis panel to Extraction",
+    group: "global",
+    hint: false,
+  },
+  {
+    key: "[",
+    description: "Collapse or expand the navigation rail",
+    group: "global",
+    hint: false,
+  },
+  {
+    key: "]",
+    description: "Collapse or expand the findings queue",
+    group: "global",
+    hint: false,
+  },
+  {
+    /*
+     * Focus mode is the two rails collapsed together, and the description says
+     * what it COSTS as well as what it buys: the hint strip is one of the
+     * things it hides, so a reviewer who turns it on has to have been told
+     * where the keys went. This row is where they are told.
+     */
+    key: "F",
+    description: "Collapse both rails and the hints for the widest document",
+    group: "global",
+    hint: false,
+  },
+  {
+    /*
+     * The same toggle ClaimStrip already offers as a button, whose two labels
+     * are "Show all claims" and "Findings only". The description is worded off
+     * those two labels so the key and the button read as one control.
+     */
+    key: "S",
+    description: "Show all claim boxes, or findings only",
+    group: "global",
     hint: true,
   },
   {

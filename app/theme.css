@@ -155,6 +155,15 @@
   /* ── fixed layout widths ─────────────────────────────────── */
   --spacing-rail: 188px;   /* app nav */
   --spacing-queue: 392px;  /* findings queue column */
+
+  /* Collapsed counterparts. Each column keeps a rail rather than
+     disappearing, because a column that vanishes takes its own
+     way back with it — the reviewer would have to know a key.
+     The rail is narrow enough to buy the document real width and
+     wide enough to hold the affordance that reopens it.         */
+  --spacing-rail-min: 52px;   /* app nav, collapsed */
+  --spacing-queue-min: 46px;  /* findings queue, collapsed to dots */
+  --spacing-panel: 384px;     /* reasoning / extraction side panel */
 }
 
 /* ── light chrome + shadow colour ────────────────────────────

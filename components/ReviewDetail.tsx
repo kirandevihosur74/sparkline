@@ -29,7 +29,7 @@ import EvidenceFaceoff from "./EvidenceFaceoff";
 import QueryTracePanel from "./QueryTracePanel";
 import ViewerEmbed, { type ViewerHandle } from "./ViewerEmbed";
 import { usePathname } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getDocumentPage } from "@/lib/data";
 import type {
   AuditRecord,
@@ -150,6 +150,43 @@ export interface ReviewDetailProps {
    * does nothing is the dead control this project keeps refusing.
    */
   onSelectFinding?: (findingId: string) => void;
+  /**
+   * Whether the page shows every claim Nutrient DWS extracted, or only the
+   * ones that produced findings.
+   *
+   * LIFTED OUT OF DocumentPane, where it used to live, because two things
+   * outside this column now read it: the keyboard layer binds a key to it, and
+   * a key whose state lives three components down cannot be bound without
+   * reaching for a ref. One piece of state, one owner, two readers.
+   */
+  showAllClaims: boolean;
+  onShowAllClaimsChange: (showAll: boolean) => void;
+  /**
+   * Reports which page is ON SCREEN — not which page the claim is on.
+   *
+   * The side panel's Extraction tab serialises "the claims on this page", and
+   * the claim strip counts the same page. In the marked-text view those are
+   * the claim's page and never diverge; in the source PDF the reader can
+   * scroll, and the two would drift apart if the panel resolved the page for
+   * itself. So the pane — the only thing that knows where the viewer actually
+   * is — reports it, and the panel renders what the strip counts.
+   */
+  onPageContextChange?: (context: PageContext) => void;
+  /**
+   * True while the side panel is open.
+   *
+   * The panel's Reasoning tab renders the query trace, and so does this
+   * column. Two copies of one trace on screen at once ask the reviewer which
+   * is the evidence, so the inline copy stands down while the panel holds it.
+   * Closing the panel gives it back — the trace is never nowhere.
+   */
+  panelOpen?: boolean;
+}
+
+/** The document and page currently on screen in the pane. */
+export interface PageContext {
+  documentId: string;
+  page: number;
 }
 
 export default function ReviewDetail({
@@ -166,6 +203,10 @@ export default function ReviewDetail({
   onUndo,
   onNext,
   onSelectFinding,
+  showAllClaims,
+  onShowAllClaimsChange,
+  onPageContextChange,
+  panelOpen = false,
 }: ReviewDetailProps) {
   const verdict = VERDICT[finding.verdict];
 
@@ -225,6 +266,9 @@ export default function ReviewDetail({
           sources={sourcesOf(finding)}
           documents={documents}
           onSelectFinding={onSelectFinding}
+          showAll={showAllClaims}
+          onShowAllChange={onShowAllClaimsChange}
+          onPageContextChange={onPageContextChange}
         />
 
         {/*
@@ -233,7 +277,7 @@ export default function ReviewDetail({
          * the backend discards the result list and the accept/reject reasons.
          * See QueryTracePanel and lib/data/types.ts.
          */}
-        {finding.verdict === "stale" ? (
+        {finding.verdict === "stale" && !panelOpen ? (
           <QueryTracePanel trace={trace} findingLabel={finding.label} />
         ) : null}
       </div>
@@ -417,6 +461,9 @@ function DocumentPane({
   sources,
   documents,
   onSelectFinding,
+  showAll,
+  onShowAllChange,
+  onPageContextChange,
 }: {
   findingId: string;
   /** Tints the claim strip below the toolbar, in both of its states. */
@@ -425,6 +472,11 @@ function DocumentPane({
   documents: DocumentMeta[];
   /** Opens the finding a box belongs to. See ReviewDetailProps. */
   onSelectFinding?: (findingId: string) => void;
+  /** Controlled by ReviewWorkspace so a key can reach it. See ReviewDetailProps. */
+  showAll: boolean;
+  onShowAllChange: (showAll: boolean) => void;
+  /** Reports the page on screen upward. See ReviewDetailProps. */
+  onPageContextChange?: (context: PageContext) => void;
 }) {
   const [activeKey, setActiveKey] = useState(sources[0]?.key);
   /* The pane opens on the finding's own primary source. This used to be a
@@ -439,12 +491,12 @@ function DocumentPane({
 
   /** Where the viewer actually is. Null until a document is mounted. */
   const [visiblePage, setVisiblePage] = useState<number | null>(null);
-  /* Show every claim Nutrient DWS extracted from the page on screen, or only
-     the ones that produced findings. DEFAULT OFF — the reviewer opens on the
-     work, and asks for the rest. Owned here rather than inside ClaimStrip
-     because the overlay drawn over the page reads the same one piece of
-     state: the strip says how many claims there are, the boxes are them. */
-  const [showAll, setShowAll] = useState(false);
+  /* `showAll` — show every claim Nutrient DWS extracted from the page, or only
+     the ones that produced findings — is a PROP now, owned by ReviewWorkspace.
+     It was never ClaimStrip's, because the overlay drawn over the page reads
+     the same one piece of state (the strip says how many claims there are; the
+     boxes are them), and it is no longer this pane's either: the keyboard
+     layer binds a key to it, and that layer lives at the top of the screen. */
   /* Which of the two views of the page is mounted. Sticky across findings on
      purpose: a reviewer who opened the source PDF is reading the file, and
      having it swapped back out from under them at the next finding would be
@@ -510,6 +562,12 @@ function DocumentPane({
 
   return (
     <section aria-label="Source document" className="flex flex-col gap-3">
+      {/* Renders nothing; reports the page on screen upward. See below. */}
+      <PageContextReporter
+        documentId={active.source.documentId}
+        page={stripPage}
+        onChange={onPageContextChange}
+      />
       <div className="rounded border border-line bg-surface px-4 py-2.5">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -631,7 +689,7 @@ function DocumentPane({
         verdict={verdict}
         boxesShown={markedText}
         showAll={showAll}
-        onShowAllChange={setShowAll}
+        onShowAllChange={onShowAllChange}
       />
 
       {markedText && facsimile ? (
@@ -722,6 +780,35 @@ function documentName(
 }
 
 /** See TODO(schema-gap: Document) on DocumentPane. */
+/**
+ * Reports the document and page on screen to whoever owns the side panel.
+ *
+ * A COMPONENT rather than an effect inside DocumentPane, and not by choice:
+ * the pane returns early when a finding records no source location, and
+ * `stripPage` is only knowable after that point. A hook cannot live below a
+ * conditional return, and hoisting the page maths above it would mean
+ * computing the whole view — active tab, facsimile, viewer position — for a
+ * finding that has no page at all. So the report is mounted where the answer
+ * exists, and renders nothing.
+ *
+ * The effect runs on the VALUES, not on the callback, and the parent guards
+ * for equality, so a pane that re-renders without moving reports nothing.
+ */
+function PageContextReporter({
+  documentId,
+  page,
+  onChange,
+}: {
+  documentId: string;
+  page: number;
+  onChange?: (context: PageContext) => void;
+}) {
+  useEffect(() => {
+    onChange?.({ documentId, page });
+  }, [documentId, page, onChange]);
+  return null;
+}
+
 function documentUrl(documentId: string): string {
   return `/${documentId}.pdf`;
 }
