@@ -576,6 +576,13 @@ export default function ReviewWorkspace({
               onReject={handleReject}
               onUndo={handleUndo}
               onNext={nextOpenId ? handleNext : undefined}
+              /* The claim boxes drawn over the page are navigation: clicking
+                 one selects that finding, exactly as clicking its queue card
+                 does. Same `setSelectedId` the queue is given above — one
+                 piece of state, two views of it. Without this the boxes render
+                 as inert spans, which is the dead control this project keeps
+                 refusing. */
+              onSelectFinding={setSelectedId}
             />
           </div>
         ) : (

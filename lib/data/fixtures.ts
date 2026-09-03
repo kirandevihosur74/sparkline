@@ -20,6 +20,7 @@ import type {
   ContradictionFlag,
   StalenessFlag,
   Flag,
+  FlagStatus,
   TrustScore,
   DocumentMeta,
   Finding,
@@ -104,6 +105,20 @@ import type {
   WorkspaceDashboard,
   WorkspaceRunRow,
   WorkspaceRunReport,
+  // Page overlay — the claims Nutrient DWS extracted from one page, the boxes
+  // drawn over them, the strip that counts them, and the extraction payload.
+  // No coordinates: ClaimBox.bbox is absent on every box this build ships
+  // (TODO(schema-gap: bbox) in ./types)
+  ClaimBoxVerdict,
+  ClaimBox,
+  PageTextRun,
+  DocumentPageBlock,
+  DocumentPageFacsimile,
+  PageClaimCounts,
+  PageClaimStrip,
+  ClaimBoxKeyEntry,
+  ExtractionClaimRecord,
+  ExtractionPayload,
 } from "./types";
 import { normalizeConfidence } from "./types";
 import { formatUtc, formatUtcParts } from "../format";
@@ -116,43 +131,29 @@ import { getRegisteredRun } from "./live-registry";
 export const DEMO_REVIEW_ID = "demo-2026-08";
 
 // ---------------------------------------------------------------------------
-// Documents
-// ---------------------------------------------------------------------------
-// TODO(schema-gap: Document): DocumentMeta is a frontend view-model — the
-// backend has no Document shape. See lib/data/types.ts.
-
-const documents: DocumentMeta[] = [
-  {
-    id: "doc-a",
-    title: "Wrenfield IC Memo",
-    author: "Halcyon Infrastructure Partners",
-    docType: "investment-memo",
-    datedAt: "2026-03-20",
-    pageCount: 2,
-    fileName: "doc-a-investment-memo.pdf",
-    sizeBytes: 622628,
-    uploadedAt: "2026-08-31T04:43:51.000Z",
-    claimCount: 7,
-  },
-  {
-    id: "doc-b",
-    title: "Independent Engineering Report",
-    author: "Ardenfell Engineering Advisors",
-    docType: "engineering-report",
-    datedAt: "2026-02-10",
-    pageCount: 2,
-    fileName: "doc-b-engineering-report.pdf",
-    sizeBytes: 542416,
-    uploadedAt: "2026-08-31T04:43:58.000Z",
-    claimCount: 5,
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Claims — 12 total (demo-claims.md A1–A6, B1–B5, plus the agreement-execution
-// date from Doc A's Key Terms table). sourcePage is supplied directly per the
-// TODO(derived-sourcePage) convention in lib/data/types.ts — DWS key-value
-// output carries no page number yet.
+// Claims — 16 total (demo-claims.md A1–A6, B1–B5, the agreement-execution
+// date from Doc A's Key Terms table, and Doc A page 2's four second mentions).
+// sourcePage is supplied directly per the TODO(derived-sourcePage) convention
+// in lib/data/types.ts — DWS key-value output carries no page number yet.
+//
+// WHY FOUR CLAIMS CARRY NO FINDING ("read cleanly"). A finding is one
+// verification OUTCOME per field, not one row per mention: the comparator
+// resolves `expansion_install_cost` once, the live check resolves
+// `counterparty_standing` once, and the human-review rule fires once. A
+// document that states the same field more than once yields one claim per
+// mention and still one finding, so every mention after the one the outcome
+// was recorded on carries no finding of its own. Nutrient DWS read it; no
+// rule in getVerificationRules() had anything to say about it.
+//
+// The demo memo does exactly this on page 2 — its own finding note already
+// says so ("Prose and Key Terms table agree within doc-a"), and until now the
+// corpus carried only the table half. a8–a11 are the prose halves: the
+// agreement date and the warranty stated in §3 as well as in the §4 Key Terms
+// table, the Q4 2027 target restated in the §5 schedule-risk bullet, and the
+// installer's national scale restated as the concentration mitigant.
+//
+// This is the whole point of the show-all-claims overlay: without these the
+// page proves the pipeline found four things, not that it read the page.
 // ---------------------------------------------------------------------------
 
 const claims = {
@@ -227,6 +228,49 @@ const claims = {
     confidence: normalizeConfidence(93.6),
     sourcePage: 2,
   },
+  // Doc A, page 2 — SECOND MENTIONS. Every claim above produced a finding;
+  // these four produced none, and that is not an omission. See the
+  // "read cleanly" note under the Claims header for the rule.
+  a8: {
+    id: "claim-a8",
+    claimType: "AGREEMENT_DATE",
+    extractionMethod: "text",
+    documentId: "doc-a",
+    field: "agreement_execution_date",
+    value: "Executed January 2026",
+    confidence: normalizeConfidence(91.8),
+    sourcePage: 2,
+  },
+  a9: {
+    id: "claim-a9",
+    claimType: "WARRANTY",
+    extractionMethod: "text",
+    documentId: "doc-a",
+    field: "workmanship_warranty",
+    value: "Installer-backed 25-year workmanship warranty",
+    confidence: normalizeConfidence(89.5),
+    sourcePage: 2,
+  },
+  a10: {
+    id: "claim-a10",
+    claimType: "COD",
+    extractionMethod: "text",
+    documentId: "doc-a",
+    field: "commercial_operation_date",
+    value: "Q4 2027",
+    confidence: normalizeConfidence(87.3),
+    sourcePage: 2,
+  },
+  a11: {
+    id: "claim-a11",
+    claimType: "COUNTERPARTY_SCALE",
+    extractionMethod: "text",
+    documentId: "doc-a",
+    field: "counterparty_scale",
+    value: "National scale",
+    confidence: normalizeConfidence(81.4),
+    sourcePage: 2,
+  },
   // Doc B — Independent Engineering Report
   b1: {
     id: "claim-b1",
@@ -281,6 +325,73 @@ const claims = {
 } satisfies Record<string, ExtractedClaim>;
 
 const allClaims: ExtractedClaim[] = Object.values(claims);
+
+/** Claims this run extracted from one document — counted, never typed in. */
+function countClaims(documentId: string): number {
+  return allClaims.filter((claim) => claim.documentId === documentId).length;
+}
+
+/**
+ * Mean DWS field confidence across a set of claims, as a 0–100 reading.
+ * The extraction trust component and every "mean extraction confidence N%"
+ * sentence in the reasoning stream are this function over their own claims,
+ * so none of them can drift from the corpus they describe.
+ */
+function meanConfidencePct(set: readonly ExtractedClaim[]): number {
+  if (set.length === 0) return 0;
+  const total = set.reduce((sum, claim) => sum + claim.confidence, 0);
+  return Math.round((total / set.length) * 100);
+}
+
+/**
+ * "11 claims extracted from Wrenfield IC Memo — mean extraction confidence
+ * 91%." Both numbers are counted off the claims named, so the reasoning stream
+ * cannot narrate a corpus the run did not extract.
+ */
+function extractionRead(label: string, set: readonly ExtractedClaim[]): string {
+  return `${plural(set.length, "claim", "claims")} extracted from ${label} — mean extraction confidence ${meanConfidencePct(set)}%.`;
+}
+
+/** The claims of one document, in extraction order. */
+function documentClaimsOf(
+  set: readonly ExtractedClaim[],
+  documentId: string,
+): readonly ExtractedClaim[] {
+  return set.filter((claim) => claim.documentId === documentId);
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+// TODO(schema-gap: Document): DocumentMeta is a frontend view-model — the
+// backend has no Document shape. See lib/data/types.ts.
+
+const documents: DocumentMeta[] = [
+  {
+    id: "doc-a",
+    title: "Wrenfield IC Memo",
+    author: "Halcyon Infrastructure Partners",
+    docType: "investment-memo",
+    datedAt: "2026-03-20",
+    pageCount: 2,
+    fileName: "doc-a-investment-memo.pdf",
+    sizeBytes: 622628,
+    uploadedAt: "2026-08-31T04:43:51.000Z",
+    claimCount: countClaims("doc-a"),
+  },
+  {
+    id: "doc-b",
+    title: "Independent Engineering Report",
+    author: "Ardenfell Engineering Advisors",
+    docType: "engineering-report",
+    datedAt: "2026-02-10",
+    pageCount: 2,
+    fileName: "doc-b-engineering-report.pdf",
+    sizeBytes: 542416,
+    uploadedAt: "2026-08-31T04:43:58.000Z",
+    claimCount: countClaims("doc-b"),
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Flags (domain objects, lib/types.ts shapes)
@@ -456,7 +567,7 @@ const COUNTERSIGNATURE_POLICY =
 // outcome, and one cross-document contradiction consumes two claims to produce
 // one of them.
 //
-// So the demo-claims.md routing, which is stated per CLAIM — 12 claims →
+// So the demo-claims.md routing, which is stated per CLAIM — 12 routed claims →
 // 2 conflicting, 1 stale, 1 corroborated, 5 consistent, 1 review-required,
 // 2 unverified — lands here as 11 FINDINGS: 1 conflicting (claims a1 + b1
 // collapse into the single expansion-cost contradiction), 1 stale,
@@ -680,7 +791,7 @@ const findings: Finding[] = [
 
 // ---------------------------------------------------------------------------
 // Trust score — consistent with the flags above. Extraction = mean DWS
-// confidence across the 12 claims (≈ 88); cross-reference weighted down by
+// confidence across every claim this run extracted; cross-reference weighted down by
 // one CRITICAL staleness flag and one HIGH contradiction; blended per the
 // planned 40/60 extraction/cross-reference split (blendTrustScore in
 // lib/score.ts is not implemented yet — this fixture mirrors its intent).
@@ -695,7 +806,13 @@ const findings: Finding[] = [
  * Changing either component now moves the score automatically; the two can
  * never disagree again.
  */
-const TRUST_EXTRACTION = 88;
+/*
+ * ALSO TRUE BY CONSTRUCTION, since the corpus grew: `extraction` is not
+ * authored either — it is the mean DWS field confidence over this run's own
+ * claims, so adding a claim moves the bar instead of leaving 88 standing over
+ * a set it no longer describes. It reads 88 on the 16 claims below.
+ */
+const TRUST_EXTRACTION = meanConfidencePct(allClaims);
 const TRUST_CROSS_REFERENCE = 62;
 
 const trustScore: TrustScore = {
@@ -814,7 +931,7 @@ const stages: PipelineStage[] = [
     provider: "Nutrient DWS",
     state: "done",
     durationMs: 224_180,
-    metric: { value: 12, unit: "claims" },
+    metric: { value: allClaims.length, unit: "claims" },
   },
   {
     id: "compare",
@@ -852,7 +969,7 @@ const events: PipelineEvent[] = [
   {
     timestamp: "1:53",
     message:
-      "7 claims extracted from Wrenfield IC Memo — mean extraction confidence 92%.",
+      extractionRead("Wrenfield IC Memo", documentClaimsOf(allClaims, "doc-a")),
   },
   {
     timestamp: "1:58",
@@ -862,7 +979,7 @@ const events: PipelineEvent[] = [
   {
     timestamp: "3:44",
     message:
-      "5 claims extracted from the Independent Engineering Report — mean extraction confidence 81%. 12 claims total.",
+      `${extractionRead("the Independent Engineering Report", documentClaimsOf(allClaims, "doc-b"))} ${plural(allClaims.length, "claim", "claims")} total.`,
   },
   {
     timestamp: "3:45",
@@ -1078,7 +1195,7 @@ const degradedCarriedFindings: ClaimFinding[] = claimFindings
   .map((finding) => ({ ...finding, status: "open" as const }));
 
 /**
- * 11 findings again — 12 claims, with a1 + b1 collapsing into the one
+ * 11 findings again — the same routed claims, with a1 + b1 collapsing into the one
  * contradiction — but the live-check outcomes are gone: 1 conflicting,
  * 5 consistent, 5 unverified. Queue order is materiality first.
  *
@@ -1125,7 +1242,7 @@ const degradedFlagLabel = `${degradedFlags.length} ${
 /**
  * Trust readings for the degraded run — the two components, and NO score.
  *
- * `extraction` is unchanged (88): the same 12 claims came out of the same DWS
+ * `extraction` is unchanged: the same claims came out of the same DWS
  * call. `crossReference` is 71 rather than 62 — the contradiction still weighs
  * on it, but the CRITICAL staleness flag was never discovered, so it cannot be
  * priced in.
@@ -1140,7 +1257,7 @@ const degradedFlagLabel = `${degradedFlags.length} ${
  * as an absence.
  */
 const degradedTrustScore: UnscoredTrustScore = {
-  extraction: 88,
+  extraction: TRUST_EXTRACTION,
   crossReference: 71,
   unavailable: {
     headline: "Trust score unavailable",
@@ -1181,7 +1298,7 @@ const degradedStages: PipelineStage[] = [
     provider: "Nutrient DWS",
     state: "done",
     durationMs: 219_460,
-    metric: { value: 12, unit: "claims" },
+    metric: { value: allClaims.length, unit: "claims" },
   },
   {
     id: "compare",
@@ -1217,12 +1334,12 @@ const degradedEvents: PipelineEvent[] = [
   {
     timestamp: "1:51",
     message:
-      "7 claims extracted from Wrenfield IC Memo — mean extraction confidence 92%.",
+      extractionRead("Wrenfield IC Memo", documentClaimsOf(allClaims, "doc-a")),
   },
   {
     timestamp: "3:39",
     message:
-      "5 claims extracted from the Independent Engineering Report — mean extraction confidence 81%. 12 claims total.",
+      `${extractionRead("the Independent Engineering Report", documentClaimsOf(allClaims, "doc-b"))} ${plural(allClaims.length, "claim", "claims")} total.`,
   },
   {
     timestamp: "3:41",
@@ -1357,7 +1474,7 @@ const previousDocuments: DocumentMeta[] = [
 /**
  * The January revision's five claims.
  *
- * Doc A is byte-identical across the two runs, so its seven claims are the
+ * Doc A is byte-identical across the two runs, so its eleven claims are the
  * SAME claim objects — one document, one extraction, both runs. Only the
  * engineering report was re-issued, so only its claims are re-extracted here,
  * under their own ids: a claim id names an extraction, and these came out of a
@@ -1418,7 +1535,7 @@ const previousClaims = {
   },
 } satisfies Record<string, ExtractedClaim>;
 
-/** 12 claims, same as the re-run: doc A's seven, plus rev 1's five. */
+/** The same claims as the re-run: doc A's eleven, plus rev 1's five. */
 const previousAllClaims: ExtractedClaim[] = [
   claims.a1,
   claims.a2,
@@ -1427,6 +1544,10 @@ const previousAllClaims: ExtractedClaim[] = [
   claims.a5,
   claims.a6,
   claims.a7,
+  claims.a8,
+  claims.a9,
+  claims.a10,
+  claims.a11,
   ...Object.values(previousClaims),
 ];
 
@@ -1677,7 +1798,7 @@ const previousFindings: Finding[] = [
  */
 const previousTrustScore: TrustScore = {
   blended: 68,
-  extraction: 88,
+  extraction: TRUST_EXTRACTION,
   crossReference: 55,
   formula:
     "Start at 100, subtract materiality-weighted penalties for each conflicting, stale, or review-required claim, then scale by average extraction confidence.",
@@ -1690,7 +1811,7 @@ const previousStages: PipelineStage[] = [
     provider: "Nutrient DWS",
     state: "done",
     durationMs: 218_400,
-    metric: { value: 12, unit: "claims" },
+    metric: { value: previousAllClaims.length, unit: "claims" },
   },
   {
     id: "compare",
@@ -1718,12 +1839,18 @@ const previousEvents: PipelineEvent[] = [
   {
     timestamp: "1:50",
     message:
-      "7 claims extracted from Wrenfield IC Memo — mean extraction confidence 92%.",
+      extractionRead(
+        "Wrenfield IC Memo",
+        documentClaimsOf(previousAllClaims, "doc-a"),
+      ),
   },
   {
     timestamp: "3:38",
     message:
-      "5 claims extracted from the Independent Engineering Report (rev 1, dated 16 January 2026) — mean extraction confidence 81%. 12 claims total.",
+      `${extractionRead(
+        "the Independent Engineering Report (rev 1, dated 16 January 2026)",
+        documentClaimsOf(previousAllClaims, "doc-b-r1"),
+      )} ${plural(previousAllClaims.length, "claim", "claims")} total.`,
   },
   {
     timestamp: "3:39",
@@ -1762,7 +1889,7 @@ const previousEvents: PipelineEvent[] = [
   {
     timestamp: "3:45",
     message:
-      "Run complete — 12 claims, 3 flags, 2 private assumptions left unverified, trust score 68.",
+      `Run complete — ${plural(previousAllClaims.length, "claim", "claims")}, 3 flags, 2 private assumptions left unverified, trust score ${previousTrustScore.blended}.`,
   },
 ];
 
@@ -1947,9 +2074,10 @@ export function getEvents(reviewId: string = DEMO_REVIEW_ID): PipelineEvent[] {
  * stored, so it cannot drift from the findings it counts. Keyed to our
  * ClaimVerdict/FlagStatus semantics, not the mockup's categories.
  *
- * These are counts of FINDINGS, not of claims: the demo bundle's 12 claims
+ * These are counts of FINDINGS, not of claims: the demo bundle's 16 claims
  * produce 11 findings because the two conflicting cost claims are one
- * contradiction. Label them "findings" wherever they are rendered.
+ * contradiction, and doc A page 2's four second mentions produced no finding
+ * at all. Label them "findings" wherever they are rendered.
  */
 export function getCoverage(
   reviewId: string = DEMO_REVIEW_ID,
@@ -4870,5 +4998,487 @@ export function getWorkspaceRunReport(): WorkspaceRunReport {
           }, so ${
             countsOnlyClause(reviewsWithoutRuns).possessive
           } not appear here.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// PAGE OVERLAY — the claims Nutrient DWS extracted from one page, the boxes
+// drawn over them, and the strip that counts them.
+//
+// The unit here is the CLAIM, not the finding. Findings are what the pipeline
+// concluded; claims are what extraction read, and the overlay exists to show
+// the second. So a claim that produced no finding is drawn too — in grey, and
+// inert, because there is nothing for it to open.
+//
+// NO COORDINATES ARE INVENTED HERE. Every box is a run of the page's own text;
+// it is as wide and as tall as the words it wraps. `ClaimBox.bbox` is absent
+// on every box below and the full statement of what the backend would have to
+// return — the SDK fields, and the three places lib/nutrient.ts drops them —
+// is the TODO(schema-gap: bbox) block in lib/data/types.ts.
+//
+// The page's words are verbatim from documents/doc-a-investment-memo.md.
+// ---------------------------------------------------------------------------
+
+/**
+ * Five verdicts, three box colours, plus grey for no finding.
+ *
+ * Box colour follows the KIND of outcome, never the finer label: a
+ * review-required finding is drawn in the stale colour and says "review
+ * required" in its own label and on its queue card. `unverified` is drawn the
+ * same way — the pipeline could not settle it either.
+ */
+function boxVerdictOf(verdict: ClaimVerdict | undefined): ClaimBoxVerdict {
+  if (verdict === undefined) return "none";
+  if (verdict === "conflicting") return "conflicting";
+  if (verdict === "corroborated" || verdict === "consistent") {
+    return "corroborated";
+  }
+  return "stale";
+}
+
+/** Every claim a finding was reached on, whatever shape the finding is. */
+function claimIdsOfFinding(finding: Finding): readonly string[] {
+  if (finding.verdict === "conflicting") {
+    return [finding.flag.claimA.id, finding.flag.claimB.id];
+  }
+  if (finding.verdict === "stale") return [finding.flag.claim.id];
+  return [finding.claim.id];
+}
+
+/**
+ * The finding reached on one claim, or undefined when the rules never routed
+ * it. Undefined is a first-class answer here — see the "read cleanly" note
+ * under the Claims header — and is what makes a box grey and inert.
+ */
+function findingForClaim(
+  claimId: string,
+  reviewId: string = DEMO_REVIEW_ID,
+): Finding | undefined {
+  return getFindings(reviewId).find((finding) =>
+    claimIdsOfFinding(finding).includes(claimId),
+  );
+}
+
+/** A signed outcome, or null when nobody has signed one. */
+function decisionOf(status: FlagStatus): "approved" | "rejected" | null {
+  return status === "open" ? null : status;
+}
+
+/**
+ * The box label's name.
+ *
+ * A finding carries a queue label; a CLAIM carries none — the backend has no
+ * display name for a claim, only `field`. So the four page-2 claims that
+ * produced no finding get their names here, AUTHORED, in the same words the
+ * document uses. Nothing derives them.
+ */
+const CLEAN_CLAIM_NAMES: Record<string, string> = {
+  // Named for what each one states, NOT for the finding its field produced
+  // elsewhere on the page: two boxes reading "Agreement execution date", one
+  // amber and one grey, would read as the system contradicting itself.
+  "claim-a8": "Master agreement date",
+  "claim-a9": "Warranty term",
+  "claim-a10": "Commercial operation date",
+  "claim-a11": "Concentration mitigant",
+};
+
+function buildClaimBox(
+  claim: ExtractedClaim,
+  name: string,
+  reviewId: string,
+): ClaimBox {
+  const finding = findingForClaim(claim.id, reviewId);
+  const verdict = finding?.verdict;
+  const boxVerdict = boxVerdictOf(verdict);
+  const confidencePct = Math.round(claim.confidence * 100);
+  const verdictWords = verdict ? DIFF_VERDICT_LABEL[verdict] : "no finding";
+
+  return {
+    claimId: claim.id,
+    name,
+    confidence: claim.confidence,
+    boxVerdict,
+    ...(verdict ? { verdict } : {}),
+    ...(finding ? { findingId: finding.id } : {}),
+    interactive: finding !== undefined,
+    accessibleName: `${name}, ${verdictWords}, ${confidencePct}% confidence`,
+    // bbox is deliberately absent — TODO(schema-gap: bbox) in lib/data/types.ts.
+  };
+}
+
+/** A run of the page: a string is plain text, an object is a boxed claim. */
+type PageRunSpec = string | { claim: ExtractedClaim; name: string; text: string };
+
+interface PageBlockSpec {
+  kind: "heading" | "paragraph";
+  runs: readonly PageRunSpec[];
+}
+
+/**
+ * Page 2 of the Wrenfield IC Memo, in reading order.
+ *
+ * Sections 3–6 of documents/doc-a-investment-memo.md. Eight claims are boxed:
+ * the four that produced findings, and the four second mentions that produced
+ * none. Each box wraps the exact words the claim was read from, which is the
+ * whole of its geometry.
+ */
+const DOC_A_PAGE_2: readonly PageBlockSpec[] = [
+  { kind: "heading", runs: ["3. Key Counterparties"] },
+  {
+    kind: "paragraph",
+    runs: [
+      "Installation and expansion works are performed under a master installation agreement with Freedom Forever LLC, ",
+      {
+        claim: claims.a8,
+        name: CLEAN_CLAIM_NAMES["claim-a8"],
+        text: "executed January 2026",
+      },
+      ", which ",
+      {
+        claim: claims.a4,
+        name: stalenessFinding.label,
+        text: "remains in good standing",
+      },
+      ". ",
+      {
+        claim: claims.a5,
+        name: "Counterparty scale",
+        text: "Freedom Forever is one of the largest residential solar installers in the United States",
+      },
+      ", providing national coverage and established installation crews across the portfolio’s target markets.",
+    ],
+  },
+  {
+    kind: "paragraph",
+    runs: [
+      "The ",
+      {
+        claim: claims.a9,
+        name: CLEAN_CLAIM_NAMES["claim-a9"],
+        text: "installer-backed 25-year workmanship warranty",
+      },
+      " covers the installed base, which we view as a meaningful mitigant to long-term operations and maintenance risk.",
+    ],
+  },
+  { kind: "heading", runs: ["4. Key Terms Summary (continued)"] },
+  {
+    kind: "paragraph",
+    runs: [
+      "Installation partner — Freedom Forever LLC. Master installation agreement — executed ",
+      {
+        claim: claims.a7,
+        name: "Agreement execution date",
+        text: "January 2026",
+      },
+      ". Workmanship warranty — ",
+      {
+        claim: claims.a6,
+        name: "Workmanship warranty",
+        text: "25 years, installer-backed",
+      },
+      ".",
+    ],
+  },
+  { kind: "heading", runs: ["5. Risks and Mitigants"] },
+  {
+    kind: "paragraph",
+    runs: [
+      "Construction cost inflation. The installation cost estimate reflects executed pricing under the master installation agreement; escalation exposure is limited to uncontracted scope.",
+    ],
+  },
+  {
+    kind: "paragraph",
+    runs: [
+      "Counterparty concentration. Installation works are concentrated with a single partner; this is mitigated by ",
+      {
+        claim: claims.a11,
+        name: CLEAN_CLAIM_NAMES["claim-a11"],
+        text: "the partner’s national scale",
+      },
+      " and the warranty structure described above.",
+    ],
+  },
+  {
+    kind: "paragraph",
+    runs: [
+      "Schedule risk. The ",
+      {
+        claim: claims.a10,
+        name: CLEAN_CLAIM_NAMES["claim-a10"],
+        text: "Q4 2027 commercial operation target",
+      },
+      " includes buffer against permitting and interconnection timelines observed to date.",
+    ],
+  },
+  { kind: "heading", runs: ["6. Recommendation"] },
+  {
+    kind: "paragraph",
+    runs: [
+      "The Investment Team recommends approval of the transaction as presented, subject to confirmatory diligence and final documentation.",
+    ],
+  },
+];
+
+/**
+ * Which pages this build can render as a facsimile. One today.
+ *
+ * A page with no entry has no facsimile, and getDocumentPage returns undefined
+ * for it rather than an empty page: "we have not transcribed this page" and
+ * "this page is blank" are different facts.
+ */
+const PAGE_FACSIMILES: Record<string, readonly PageBlockSpec[]> = {
+  "doc-a:2": DOC_A_PAGE_2,
+};
+
+/** Why the paper is a text rendition and says so. */
+const FACSIMILE_PROVENANCE =
+  "Text rendition of the page with the claims Nutrient DWS extracted marked — not a render of the PDF. Open the source PDF for the page itself.";
+
+const EXTRACTION_PROVIDER = "Nutrient DWS";
+
+/**
+ * The claims Nutrient DWS extracted from one page of one document.
+ *
+ * Counted off the run's own claims by `sourcePage`, so it covers a live run as
+ * well as the fixture one. A claim with no `sourcePage` is not on any page and
+ * is left out of every page count — TODO(derived-sourcePage) in
+ * lib/data/types.ts is why some claims may not have one.
+ */
+export function getPageClaims(
+  documentId: string,
+  page: number,
+  reviewId: string = DEMO_REVIEW_ID,
+): readonly ExtractedClaim[] {
+  return getClaims(documentId, reviewId).filter(
+    (claim) => claim.sourcePage === page,
+  );
+}
+
+/**
+ * The strip's three numbers: extracted, produced findings, read cleanly.
+ *
+ * `total` is computed as `withFindings + clean`, not counted separately, so
+ * the invariant the strip's sentence depends on cannot fail: the page can
+ * never advertise a total its own two numbers miss.
+ *
+ * On the demo memo's page 2 that is 8 · 4 · 4 — the four claims the rules
+ * routed (counterparty standing, counterparty scale, workmanship warranty,
+ * agreement execution date) and the four second mentions no rule had anything
+ * to say about.
+ */
+export function getPageClaimCounts(
+  documentId: string,
+  page: number,
+  reviewId: string = DEMO_REVIEW_ID,
+): PageClaimCounts {
+  const pageClaims = getPageClaims(documentId, page, reviewId);
+  const withFindings = pageClaims.filter(
+    (claim) => findingForClaim(claim.id, reviewId) !== undefined,
+  ).length;
+  const clean = pageClaims.length - withFindings;
+
+  return {
+    documentId,
+    page,
+    total: withFindings + clean,
+    withFindings,
+    clean,
+  };
+}
+
+/**
+ * One page as text with its claim spans marked, or undefined when this build
+ * has not transcribed that page.
+ */
+export function getDocumentPage(
+  documentId: string,
+  page: number,
+  reviewId: string = DEMO_REVIEW_ID,
+): DocumentPageFacsimile | undefined {
+  const spec = PAGE_FACSIMILES[`${documentId}:${page}`];
+  if (!spec) return undefined;
+
+  const document = getDocuments(reviewId).find((doc) => doc.id === documentId);
+  if (!document) return undefined;
+
+  const boxes: ClaimBox[] = [];
+  const blocks: DocumentPageBlock[] = spec.map((block) => ({
+    kind: block.kind,
+    runs: block.runs.map((run): PageTextRun => {
+      if (typeof run === "string") return { kind: "text", text: run };
+      const box = buildClaimBox(run.claim, run.name, reviewId);
+      boxes.push(box);
+      return { kind: "claim", text: run.text, box };
+    }),
+  }));
+
+  return {
+    documentId,
+    page,
+    pageCount: document.pageCount,
+    label: joinSegments([
+      document.title,
+      `page ${page} of ${document.pageCount}`,
+    ]),
+    provenance: FACSIMILE_PROVENANCE,
+    blocks,
+    boxes,
+  };
+}
+
+/** Every box on a page, in reading order — the overlay without the prose. */
+export function getPageClaimBoxes(
+  documentId: string,
+  page: number,
+  reviewId: string = DEMO_REVIEW_ID,
+): readonly ClaimBox[] {
+  return getDocumentPage(documentId, page, reviewId)?.boxes ?? [];
+}
+
+/**
+ * The strip above the page, in both states.
+ *
+ * OFF names the SELECTED FINDING and its confidence, so it changes as the
+ * reviewer moves through the queue. ON counts the page and does not. Every
+ * number is derived; the prototype's 7 / 3 / 4 are an illustration and appear
+ * nowhere.
+ *
+ * When the page has no claims at all, the ON sentence says so and the button
+ * drops its count rather than printing a zero it cannot explain.
+ */
+export function getPageClaimStrip(
+  documentId: string,
+  page: number,
+  selectedFindingId?: string,
+  reviewId: string = DEMO_REVIEW_ID,
+): PageClaimStrip {
+  const counts = getPageClaimCounts(documentId, page, reviewId);
+  const known = counts.total > 0;
+
+  const allLead = plural(counts.total, "claim", "claims");
+  const allSegments = known
+    ? [
+        `${allLead} extracted from this page by ${EXTRACTION_PROVIDER}`,
+        `${counts.withFindings} produced findings · ${counts.clean} read cleanly`,
+      ]
+    : [`No claims recorded on this page by ${EXTRACTION_PROVIDER}`];
+
+  const selected = selectedFindingId
+    ? getFindings(reviewId).find((finding) => finding.id === selectedFindingId)
+    : undefined;
+  const selectedBox = selected
+    ? getPageClaimBoxes(documentId, page, reviewId).find(
+        (box) => box.findingId === selected.id,
+      )
+    : undefined;
+
+  const selectedLead = selected ? selected.label : "";
+  const selectedSegments = selected
+    ? selectedBox
+      ? [
+          `${selectedLead} extracted from this page`,
+          `${Math.round(selectedBox.confidence * 100)}% confidence`,
+        ]
+      : [`${selectedLead} was extracted from another page`]
+    : [];
+
+  return {
+    counts,
+    provider: EXTRACTION_PROVIDER,
+    allSegments,
+    allLead,
+    selectedSegments,
+    selectedLead,
+    showAllLabel: known
+      ? `Show all ${plural(counts.total, "claim", "claims")}`
+      : "Show all claims",
+    findingsOnlyLabel: "Findings only",
+  };
+}
+
+/** The four swatch labels, in the order the key lists them. */
+const CLAIM_BOX_KEY_LABELS: Record<ClaimBoxVerdict, string> = {
+  stale: "Stale",
+  conflicting: "Conflicting",
+  corroborated: "Corroborated",
+  none: "No finding",
+};
+
+/**
+ * The key under the page.
+ *
+ * "No finding" is marked `showAllOnly` — the key must not advertise a swatch
+ * that is not on the page, and that swatch only exists while show-all is on.
+ * `present` reports, per colour, whether the page actually draws one: page 2
+ * of the demo memo has no conflicting box, because that finding's claim is on
+ * page 1.
+ */
+export function getClaimBoxKey(
+  documentId: string,
+  page: number,
+  reviewId: string = DEMO_REVIEW_ID,
+): readonly ClaimBoxKeyEntry[] {
+  const drawn = new Set(
+    getPageClaimBoxes(documentId, page, reviewId).map((box) => box.boxVerdict),
+  );
+  const order: readonly ClaimBoxVerdict[] = [
+    "stale",
+    "conflicting",
+    "corroborated",
+    "none",
+  ];
+
+  return order.map((boxVerdict) => ({
+    boxVerdict,
+    label: CLAIM_BOX_KEY_LABELS[boxVerdict],
+    showAllOnly: boxVerdict === "none",
+    present: drawn.has(boxVerdict),
+  }));
+}
+
+/**
+ * The Extraction tab's payload — one record per claim ON THIS PAGE, ready to
+ * be JSON.stringify'd without transformation.
+ *
+ * Scoped to the page the comment names. The prototype printed "page 2" over a
+ * list that included claims from other pages; a header that its own body does
+ * not back is the failure this project keeps removing.
+ *
+ * `confidence` is the 0–1 reading at two decimals. `decision` is null until a
+ * decision is signed, and null for a claim with no finding — there is nothing
+ * to decide. `bbox` is absent on every record: the pipeline never kept one
+ * (TODO(schema-gap: bbox) in lib/data/types.ts).
+ */
+export function getExtractionPayload(
+  documentId: string,
+  page: number,
+  selectedFindingId?: string,
+  reviewId: string = DEMO_REVIEW_ID,
+): ExtractionPayload {
+  const pageClaims = getPageClaims(documentId, page, reviewId);
+
+  const records: ExtractionClaimRecord[] = pageClaims.map((claim) => {
+    const finding = findingForClaim(claim.id, reviewId);
+    return {
+      id: claim.id,
+      value: claim.value,
+      confidence: Number(claim.confidence.toFixed(2)),
+      verdict: boxVerdictOf(finding?.verdict),
+      decision: finding ? decisionOf(finding.status) : null,
+    };
+  });
+
+  const selectedClaim = selectedFindingId
+    ? pageClaims.find((claim) =>
+        findingForClaim(claim.id, reviewId)?.id === selectedFindingId,
+      )
+    : undefined;
+
+  return {
+    comment: `// ${EXTRACTION_PROVIDER} extraction · ${documentId} · page ${page}`,
+    documentId,
+    page,
+    claims: records,
+    ...(selectedClaim ? { selectedClaimId: selectedClaim.id } : {}),
   };
 }

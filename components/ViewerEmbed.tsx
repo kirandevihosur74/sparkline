@@ -70,6 +70,36 @@ import { useThemeStamp } from "./ThemeToggle";
  * we are asking a reviewer to trust. There is no page-invert or night-mode
  * option in the SDK's typings, and we would not want one here.
  *
+ * ── NOTHING IS DRAWN ON TOP OF THIS VIEWER, AND WHY ─────────────────────────
+ *
+ * The claim boxes (components/ClaimBoxOverlay.tsx) mark the words each claim
+ * was extracted from. They are NOT an absolutely-positioned layer over this
+ * component, and adding one would be wrong twice over:
+ *
+ *   · THERE ARE NO COORDINATES TO DRAW AT. `ClaimBox.bbox` is absent on every
+ *     box this build ships. DWS json-content does return bboxes and
+ *     lib/nutrient.ts drops them in three places — the full statement is
+ *     TODO(schema-gap: bbox) in lib/data/types.ts. A layer positioned by
+ *     left/top percentages over a rendered page would be inventing the one
+ *     number the pipeline never kept, and it would be inventing it over the
+ *     document a reviewer signs against.
+ *   · THIS COMPONENT DOES NOT OWN THE GEOMETRY IT RENDERS. The SDK mounts into
+ *     a shadow root on `.PSPDFKit-Container` and keeps its own scroll
+ *     container, spread layout and zoom inside it. Our DOM has no stable
+ *     relationship to any of that: an overlay would have to re-measure
+ *     `.PSPDFKit-Page` through the shadow boundary on every scroll, zoom,
+ *     resize, spread change and page change, and would drift by exactly one
+ *     frame's worth of lag each time — worst at the zoom levels a reviewer
+ *     uses to read a figure, which is when a box being one line off is a
+ *     misreport rather than a wobble.
+ *
+ * So ReviewDetail's document pane mounts EITHER this viewer OR the marked-text
+ * rendition, never one over the other, and this file stays what it is: the
+ * source PDF, rendered, with nothing of ours painted on it. When ClaimSource
+ * grows real rects in a named unit, the honest way in is the SDK's own
+ * annotation API (which lives inside the same shadow root and moves with the
+ * page), not a `position:absolute` div of ours.
+ *
  * Re-applying the THEME still costs a reload: the theme is load configuration
  * and the SDK exposes no runtime setter (nothing like `setTheme` on the
  * instance), so the effect below takes the stamp as a dependency and

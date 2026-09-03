@@ -67,6 +67,9 @@
   /* ── semantic: verified / approved / agreed ──────────────── */
   --color-accent: #1b5e4b;
   --color-accent-soft: #e8f1ee;
+  /* The missing sibling of `warn-line` and `alert-line`: the 1px rule on a
+     tinted accent surface (the claim strip under the document toolbar). */
+  --color-accent-line: #cfe1da;
 
   /* ── semantic: stale / caution / degraded ────────────────── */
   --color-warn: #8a6410;
@@ -223,6 +226,7 @@
   /* verified / approved / agreed */
   --dark-accent: #5cbf9d;
   --dark-accent-soft: #142c25;
+  --dark-accent-line: #28584a;
 
   /* stale / caution / degraded */
   --dark-warn: #d7ab5c;
@@ -278,6 +282,7 @@
 
     --color-accent: var(--dark-accent);
     --color-accent-soft: var(--dark-accent-soft);
+    --color-accent-line: var(--dark-accent-line);
 
     --color-warn: var(--dark-warn);
     --color-warn-soft: var(--dark-warn-soft);
@@ -320,6 +325,7 @@
 
   --color-accent: var(--dark-accent);
   --color-accent-soft: var(--dark-accent-soft);
+  --color-accent-line: var(--dark-accent-line);
 
   --color-warn: var(--dark-warn);
   --color-warn-soft: var(--dark-warn-soft);

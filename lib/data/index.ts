@@ -160,6 +160,27 @@ export type {
   WorkspaceDashboard,
   WorkspaceRunRow,
   WorkspaceRunReport,
+  // The page overlay — every claim Nutrient DWS extracted from one page, the
+  // box drawn over each one, the strip that counts them, and the Extraction
+  // tab's payload. The unit is the CLAIM, not the finding: a claim that
+  // produced no finding is drawn in grey and is not a click target.
+  //
+  // NO COORDINATES. ClaimBbox is typed and is ABSENT on every box this build
+  // ships — DWS returns bboxes and lib/nutrient.ts drops them in three places;
+  // the full statement is TODO(schema-gap: bbox) in ./types. The overlay is
+  // positioned by the page's own ordered text runs instead, so nothing here
+  // presents fixture coordinates as extracted ones.
+  ClaimBbox,
+  ClaimBoxVerdict,
+  ClaimBox,
+  PageTextRun,
+  DocumentPageBlock,
+  DocumentPageFacsimile,
+  PageClaimCounts,
+  PageClaimStrip,
+  ClaimBoxKeyEntry,
+  ExtractionClaimRecord,
+  ExtractionPayload,
 } from "./types";
 
 export { normalizeConfidence } from "./types";
@@ -231,4 +252,15 @@ export {
   getWorkspaceSources,
   getWorkspaceTeam,
   getWorkspaceRunReport,
+  // The page overlay. Counts are derived per page on every call —
+  // total === withFindings + clean by construction — and getDocumentPage is
+  // undefined for a page this build has not transcribed, which is a different
+  // fact from a blank page.
+  getPageClaims,
+  getPageClaimCounts,
+  getPageClaimBoxes,
+  getDocumentPage,
+  getPageClaimStrip,
+  getClaimBoxKey,
+  getExtractionPayload,
 } from "./fixtures";

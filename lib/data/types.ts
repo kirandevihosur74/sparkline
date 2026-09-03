@@ -408,9 +408,10 @@ export type RejectReason =
  *
  * EVERY NUMBER HERE IS A COUNT OF FINDINGS, NOT OF CLAIMS. A finding is one
  * verification outcome, and a cross-document contradiction consumes two
- * claims to produce one finding — so the 12-claim demo bundle yields 11
- * findings. Label these numbers "findings" in the UI; calling them claims
- * misstates the total by exactly the number of contradictions.
+ * claims to produce one finding, while a claim the rules never routed
+ * produces none — so the 16-claim demo bundle yields 11 findings. Label these
+ * numbers "findings" in the UI; calling them claims misstates the total by
+ * the number of contradictions plus the number of claims that read cleanly.
  *
  * Keyed to our shipped verdict semantics (ClaimVerdict + FlagStatus), not to
  * the mockup's flat corroborated/openConflict/openStale categories.
@@ -1573,7 +1574,7 @@ export interface RunLedgerEntry extends LedgerEntryBase {
   label: string;
   /** The run's own trigger note — why it happened. */
   summary: string;
-  /** What it produced, counted off it: "11 findings · 12 claims · 2 documents". */
+  /** What it produced, counted off it: "11 findings · 16 claims · 2 documents". */
   outcomeText: string;
   /** Why the signature and hash columns are empty on this row. */
   unsignedNote: string;
@@ -2130,7 +2131,7 @@ export interface WorkspaceRunRow {
   runHref: string;
   /** "K. Shah · Pipeline owner", or the say-so copy when nobody is recorded. */
   ownerText: string;
-  /** "11 findings · 12 claims · 2 documents" — counted off the run. */
+  /** "11 findings · 16 claims · 2 documents" — counted off the run. */
   outcomeText: string;
   /** Present only when this run had a predecessor to compare against. */
   diff?: RunDiff;
@@ -2162,4 +2163,271 @@ export interface WorkspaceRunReport {
   headlineNote: string;
   /** What the run record does and does not cover. */
   scopeNote: string;
+}
+
+// ---------------------------------------------------------------------------
+// PAGE OVERLAY — every claim Nutrient DWS extracted from one page, the box
+// drawn over each one, and the strip that counts them.
+//
+// The overlay exists to show that extraction READ THE PAGE, not that the
+// pipeline found three things. So its unit is the CLAIM, not the finding: a
+// claim that produced no finding is drawn too, in grey, and is inert.
+//
+// TODO(schema-gap: bbox) — WHY THERE ARE NO COORDINATES HERE.
+//
+// Nutrient DWS does return them. In the json-content schema every
+// `extract*` method resolves to
+// (node_modules/@nutrient-sdk/dws-client-typescript/dist/generated/api-types.d.ts):
+//
+//   - `JsonContentsBbox` (line 1452) = { left, top, width, height };
+//   - `KVPKey` (1546) and `KVPValue` (1557) each carry a REQUIRED `bbox`;
+//   - `TableCell` (1569) and every Table/Row/Column/Line carry one;
+//   - `StructuredText` (1526) carries Word/Line/Paragraph bboxes — the only
+//     surface that can locate a PROSE claim;
+//   - `PageJsonContents` (1620) carries `pageIndex`, so the page is available
+//     directly and `sourcePage` would stop being authored (see
+//     TODO(derived-sourcePage) above).
+//
+// This repo drops all of it, in three places in lib/nutrient.ts:
+//
+//   1. `extractKvps` (lib/nutrient.ts:81) casts the response to a hand-written
+//      narrow type carrying only `confidence`, `key.content`, `value.content`.
+//      The `bbox` on both halves is in the JSON at runtime and is thrown away
+//      by the cast.
+//   2. `walkTableCells` (lib/nutrient.ts:41) keeps `rowIndex`, `columnIndex`
+//      and `text`; `TableCell.bbox` is walked past.
+//   3. `extractPageTexts` (lib/nutrient.ts:106) reads `p.plainText` only, and
+//      the SDK's `extractText` convenience calls
+//      `outputJson({ plainText: true, tables: false })` — `structuredText` is
+//      never requested, so word bboxes are not even in the response.
+//
+// Closing it is a backend change, not a cast fix: prose claims (and the
+// `excerpt` shown for EVERY claim, which comes from `sentenceAt()` over
+// plainText) need the pipeline to call
+// `client.workflow().addFilePart(f).outputJson({ plainText: true, structuredText: true })`
+// and map character offsets onto `Word[]` bboxes — or to move to the newer
+// `client.parse()` / `client.parseElements()` API, whose `Bounds`
+// ({ x, y, width, height }, top-left origin, RENDER-SPACE PIXELS) is paired
+// with a `PageRef { pageIndex, pageNumber, width, height }` that defines the
+// canvas those pixels are in. Neither exists today.
+//
+// So `ClaimBox.bbox` is ABSENT on every box this build ships, and the overlay
+// is positioned by the page's own ordered text runs instead — a text rendition
+// with the claim spans marked, which needs no coordinate space and therefore
+// invents none. Fixture coordinates are never presented as extracted ones.
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a claim sits on its page, in the coordinate space DWS json-content
+ * uses: `left`/`top`/`width`/`height` on the page named by `page`.
+ *
+ * NOTHING IN THIS BUILD SETS IT — see TODO(schema-gap: bbox) above. It is
+ * typed so the extraction payload can carry it the day the pipeline keeps it,
+ * and so its absence is a stated absence rather than a missing field.
+ *
+ * `unit` is part of the gap: json-content does not document whether its
+ * numbers are PDF user space or render pixels, and the newer parse API's
+ * `Bounds` says render-space pixels against an explicit `PageRef`. A consumer
+ * cannot scale a rect it cannot name the units of.
+ */
+export interface ClaimBbox {
+  page: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  /** Which space the four numbers are in, once the backend can say. */
+  unit: "pdf-user-space" | "render-px";
+}
+
+/**
+ * The four box colours the overlay draws. Five ClaimVerdicts collapse to three
+ * of them — box colour follows the KIND of outcome, never the finer label,
+ * which is carried in the box's own label and in the queue card instead.
+ *
+ *   conflicting                        → conflicting
+ *   stale, review_required             → stale
+ *   corroborated, consistent           → corroborated
+ *   unverified                         → stale (the pipeline could not settle it)
+ *   no finding at all                  → none
+ */
+export type ClaimBoxVerdict = "stale" | "conflicting" | "corroborated" | "none";
+
+/**
+ * One box on the page: a claim Nutrient DWS extracted, and whether it opens
+ * anything.
+ *
+ * A box with `boxVerdict: "none"` is a claim that produced NO finding. It is
+ * drawn (that is the point of the overlay), it shows its label on hover, and
+ * it is NOT a click target — `findingId` is absent and `interactive` is false,
+ * because there is nothing to open. Components must not render it as a button.
+ */
+export interface ClaimBox {
+  claimId: string;
+  /** Queue label, e.g. "Counterparty standing" — the box label's first half. */
+  name: string;
+  /** 0–1, as everywhere else in this contract. The label's second half. */
+  confidence: number;
+  /** Which of the four colours to draw. */
+  boxVerdict: ClaimBoxVerdict;
+  /**
+   * The full verdict of the finding this claim produced, for the accessible
+   * name. Absent when the claim produced no finding — an absent verdict is the
+   * answer, not a lookup that failed.
+   */
+  verdict?: ClaimVerdict;
+  /** The finding this box selects when clicked. Absent ⇒ not a click target. */
+  findingId?: string;
+  /** True exactly when `findingId` is set. */
+  interactive: boolean;
+  /** "Counterparty standing, stale, 92% confidence" — the accessible name. */
+  accessibleName: string;
+  /** ABSENT on every box this build ships — TODO(schema-gap: bbox) above. */
+  bbox?: ClaimBbox;
+}
+
+/**
+ * One run of the page's text in reading order: either plain text, or text a
+ * box is drawn over.
+ *
+ * This IS the overlay's geometry. A claim run is as wide and as tall as the
+ * words it wraps and re-wraps with them at any container width, so the page
+ * needs no coordinate space and the build synthesises no rects.
+ */
+export type PageTextRun =
+  | { kind: "text"; text: string }
+  | { kind: "claim"; text: string; box: ClaimBox };
+
+/** A block of the page — a section heading or a paragraph of body prose. */
+export interface DocumentPageBlock {
+  kind: "heading" | "paragraph";
+  runs: readonly PageTextRun[];
+}
+
+/**
+ * One page of a document, as text with its claim spans marked.
+ *
+ * NOT a render of the PDF and it does not claim to be: `provenance` says what
+ * it is, and the real file stays one click away. The page's own words are
+ * verbatim from documents/doc-a-investment-memo.md.
+ */
+export interface DocumentPageFacsimile {
+  documentId: string;
+  /** 1-based, matching ClaimSource.page and ExtractedClaim.sourcePage. */
+  page: number;
+  pageCount: number;
+  /** "Wrenfield IC Memo · page 2 of 2". */
+  label: string;
+  /** Why this is a text rendition and not a page render. */
+  provenance: string;
+  blocks: readonly DocumentPageBlock[];
+  /** Every box on this page, in reading order — the same objects as the runs. */
+  boxes: readonly ClaimBox[];
+}
+
+/**
+ * The claims of one page, counted three ways.
+ *
+ * `total` is ALWAYS `withFindings + clean` — it is computed from them, never
+ * stored beside them, so the strip cannot advertise a total its own two
+ * numbers miss.
+ */
+export interface PageClaimCounts {
+  documentId: string;
+  page: number;
+  /** Claims Nutrient DWS extracted from this page. */
+  total: number;
+  /** Of those, the ones that produced a finding. */
+  withFindings: number;
+  /** Of those, the ones that produced none — "read cleanly". */
+  clean: number;
+}
+
+/**
+ * The strip above the page, in both of its states.
+ *
+ * OFF is about the SELECTED FINDING and changes as the reviewer moves through
+ * the queue; ON is about the PAGE and does not. Both sentences are composed
+ * around counts derived from the claims — the numbers are never typed in, and
+ * `total === withFindings + clean` is asserted where they are built.
+ *
+ * Each `*Segments` array is the sentence already split at its separators, so a
+ * component renders the middots without knowing the copy.
+ */
+export interface PageClaimStrip {
+  counts: PageClaimCounts;
+  /** Who did the extraction — named next to its output, as the copy rules require. */
+  provider: string;
+  /**
+   * Show-all ON: ["7 claims extracted from this page by Nutrient DWS",
+   * "3 produced findings · 4 read cleanly"]. The bold fragment is the count.
+   */
+  allSegments: readonly string[];
+  /** The claim count on its own, so the component can bold exactly it. */
+  allLead: string;
+  /** Show-all OFF, for the selected finding: ["Counterparty standing extracted from this page", "92% confidence"]. */
+  selectedSegments: readonly string[];
+  /** The finding name on its own, so the component can bold exactly it. */
+  selectedLead: string;
+  /** "Show all 7 claims" — falls back to "Show all claims" with no count. */
+  showAllLabel: string;
+  /** "Findings only". */
+  findingsOnlyLabel: string;
+}
+
+/** One swatch in the key under the page. */
+export interface ClaimBoxKeyEntry {
+  boxVerdict: ClaimBoxVerdict;
+  /** "Stale" / "Conflicting" / "Corroborated" / "No finding". */
+  label: string;
+  /**
+   * True for the "No finding" entry, which the key shows ONLY while show-all
+   * is on — the key never advertises a swatch that is not on the page.
+   */
+  showAllOnly: boolean;
+  /**
+   * Whether a box of this colour is actually drawn on the page being shown.
+   * Counted off that page's boxes, so a key cannot name a colour the reader
+   * will not find. (Page 2 of the demo memo draws no conflicting box — that
+   * finding's claim is on page 1.)
+   */
+  present: boolean;
+}
+
+/**
+ * One claim as the Extraction tab prints it.
+ *
+ * Shaped to be serialized as-is: the field names and order ARE the JSON, so a
+ * component renders it without transforming anything. `confidence` is the
+ * 0–1 reading rounded to two decimals, matching normalizeConfidence().
+ * `decision` is null — not absent — when nobody has signed the finding yet,
+ * and `bbox` is absent (not null) because the pipeline never had one to record
+ * (TODO(schema-gap: bbox)); an absent field says "not recorded", a null says
+ * "recorded as nothing".
+ */
+export interface ExtractionClaimRecord {
+  id: string;
+  value: string;
+  confidence: number;
+  verdict: ClaimBoxVerdict;
+  decision: "approved" | "rejected" | null;
+  bbox?: ClaimBbox;
+}
+
+/**
+ * The Extraction tab's whole payload.
+ *
+ * `claims` is SCOPED TO THE PAGE the comment names. The prototype printed a
+ * page number in the comment while listing claims from other pages, which is
+ * the honesty rule's exact failure: the header claimed something the body did
+ * not back.
+ */
+export interface ExtractionPayload {
+  /** "// Nutrient DWS extraction · doc-a · page 2" — rendered above the object. */
+  comment: string;
+  documentId: string;
+  page: number;
+  claims: readonly ExtractionClaimRecord[];
+  /** The claim currently selected, so the tab can band its object. Absent when the selection is not on this page. */
+  selectedClaimId?: string;
 }
