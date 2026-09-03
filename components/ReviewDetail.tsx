@@ -23,6 +23,7 @@
 
 import ClaimStrip, { ClaimBoxKey } from "./ClaimStrip";
 import ClaimBoxOverlay from "./ClaimBoxOverlay";
+import ClampedText from "./ClampedText";
 import ConfidenceMeter from "./ConfidenceMeter";
 import DecisionBar from "./DecisionBar";
 import EvidenceFaceoff from "./EvidenceFaceoff";
@@ -292,12 +293,13 @@ export default function ReviewDetail({
                sit ON that row rather than under the paragraph. On its own
                line the control cost exactly the line the clamp saved, and
                the header came out a pixel TALLER than before it existed. */
-            <ClampedSummary text={finding.summary}>
+            <ClampedText text={finding.summary} clampClassName="line-clamp-2"
+              className="mt-2 text-body text-ink-2">
               <ConfidenceMeter
                 value={headlineConfidence(finding)}
                 caption={CONFIDENCE_CAPTION[finding.verdict]}
               />
-            </ClampedSummary>
+            </ClampedText>
           ) : (
             <>
               {/* The system says what it does not know. */}
@@ -416,7 +418,9 @@ function ClaimEvidence({
       </div>
 
       {source.excerpt ? (
-        /* A quoted excerpt — one of the two places serif is allowed. */
+        /* A quoted excerpt — one of the two places serif is allowed. Clamped:
+           an untruncated excerpt is the single tallest thing in this panel,
+           and the document below it is what the height is for. */
         <p className="mt-3 font-serif text-body break-words text-ink-2">
           &ldquo;{source.excerpt}&rdquo;
         </p>
@@ -880,82 +884,6 @@ function documentName(
 }
 
 /** See TODO(schema-gap: Document) on DocumentPane. */
-/**
- * The finding's summary, clamped to two lines until asked for the rest.
- *
- * The header used to spend up to 58px on three lines of prose (77px at
- * 1440, where the longest summary wraps to four), and the document below it
- * was the thing going without: 56% of the column's height was consumed
- * before the source page even started. Two lines is enough to know what the
- * finding is about; the rest is one click away.
- *
- * MEASURED, not assumed. `line-clamp-2` hides the overflow but cannot tell
- * anyone it did, so a summary that happens to fit in two lines would still
- * get a "More" control that expands nothing — the dead control this project
- * keeps refusing. The button appears only when the text is genuinely taller
- * than its clamp, which is a fact about the rendered box and therefore has
- * to be read from the DOM after layout.
- *
- * It is re-measured when the width changes, because the same sentence wraps
- * to two lines at 1600 and four at 1440, and a control that was correct at
- * one width is wrong at the other.
- */
-function ClampedSummary({
-  text,
-  children,
-}: {
-  text: string;
-  /** The confidence row. Rendered beside the expand control, never below it. */
-  children: React.ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [clamped, setClamped] = useState(false);
-  const ref = useRef<HTMLParagraphElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const measure = () => {
-      /* scrollHeight is the full text; clientHeight is what the clamp
-         lets through. They differ only when something is actually cut. */
-      setClamped(el.scrollHeight - el.clientHeight > 1);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-    /* Re-measured when the text changes: the next finding's summary is a
-       different length and inherits nothing from this one. Expanding is
-       deliberately NOT a dependency — the paragraph is unclamped then, so
-       a measurement would read "nothing is cut" and hide the control that
-       collapses it again. */
-  }, [text]);
-
-  return (
-    <>
-      <p
-        ref={ref}
-        className={`mt-2 text-body text-ink-2 ${expanded ? "" : "line-clamp-2"}`}
-      >
-        {text}
-      </p>
-      <div className="mt-3 flex items-center justify-between gap-4">
-        {children}
-        {clamped ? (
-          <button
-            type="button"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((open) => !open)}
-            className="shrink-0 cursor-pointer rounded-sm text-caption text-ink-3 underline underline-offset-2 hover:text-ink focus-visible:shadow-selected focus-visible:outline-none"
-          >
-            {expanded ? "Show less" : "Show more"}
-          </button>
-        ) : null}
-      </div>
-    </>
-  );
-}
-
 /**
  * Reports the document and page on screen to whoever owns the side panel.
  *
