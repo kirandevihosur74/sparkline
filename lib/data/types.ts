@@ -30,6 +30,8 @@ export type {
   FlagStatus,
   TrustScore,
   ReviewRecord,
+  SigningStep,
+  SigningTimings,
 } from "@/lib/types";
 
 /** Error envelope every API route returns on 400/500/501. */
@@ -118,6 +120,7 @@ import type {
   TrustScore as TrustScoreT,
   ReviewRecord as ReviewRecordT,
   Flag as FlagT,
+  SigningStep as SigningStepT,
 } from "@/lib/types";
 
 /**
@@ -346,17 +349,29 @@ export interface ReviewSummary {
  * One row of the audit ledger (screen 6: timestamp · reviewer · claim ·
  * decision · evidence · hash).
  *
- * TODO(schema-gap: ReviewRecord): the backend ReviewRecord (lib/types.ts)
- * carries NO content hash — the signed-PDF digest lives inside the DWS
- * signature and is never surfaced. `contentHash` here is a FIXTURE-ONLY
- * placeholder (prefixed "fixture-sha256:" so it cannot be mistaken for a
- * real digest) until the sign route returns one. The same gap covers `reason`
- * and `note`: ReviewRecord records THAT a reviewer rejected something but not
- * why — no structured reason code and no free-text note survive the sign
- * route, so a rejected row in the ledger is unexplainable today.
+ * CLOSED (was TODO(schema-gap: ReviewRecord), stale as of Day 4): the sign
+ * route now returns a REAL digest. signDecision() (lib/runs/records.ts)
+ * SHA-256s the signed PDF bytes and writes `contentHash` as "sha256:<hex>",
+ * and it carries the reviewer's structured `reason` and free-text `note`
+ * through to the ledger row, so a rejected row IS explainable. What remains
+ * fixture-authored is only the committed fixture ledger in
+ * lib/data/fixtures.ts, whose rows keep the "fixture-sha256:" prefix
+ * precisely so they can never be mistaken for a measured digest. The rule for
+ * reading a row: "sha256:" was computed over bytes on disk;
+ * "fixture-sha256:" was typed by a human.
+ *
+ * `contentHash` is REQUIRED here and optional on ReviewRecord because every
+ * row that reaches the ledger table — fixture or signed — has one.
+ *
+ * Inherited from ReviewRecord: `timings` (SigningTimings), present only on
+ * rows this build signed. Absent on fixture rows and on rows signed before
+ * the signing path was instrumented; a row with no timings must render none.
  */
 export interface AuditRecord extends ReviewRecordT {
-  /** Fixture-only placeholder — NOT a real digest. See TODO above. */
+  /**
+   * "sha256:<hex>" over the signed PDF bytes on a signed row;
+   * "fixture-sha256:<hex>" on a committed fixture row, which is NOT a digest.
+   */
   contentHash: string;
   /** Denormalized claim context for the ledger table. */
   claimField: string;
@@ -388,8 +403,20 @@ export interface AuditRecord extends ReviewRecordT {
 }
 
 /**
- * Why a reviewer rejected a finding. Fixture-only — see
- * TODO(schema-gap: ReviewRecord) above.
+ * The error body POST /api/sign returns when signing fails.
+ *
+ * `step` is a SEPARATE field, never folded into `error`: a UI that has to
+ * parse prose to learn which link of the chain broke is the bug this avoids.
+ * It is absent when the failure happened before the chain started (a bad
+ * request, or a review/finding that does not exist), because no step ran.
+ */
+export interface SignErrorResponse extends ApiError {
+  step?: SigningStepT;
+}
+
+/**
+ * Why a reviewer rejected a finding. Now round-trips through the sign route
+ * (SignInput.reason → AuditRecord.reason); fixtures author their own.
  */
 export type RejectReason =
   | "not_a_conflict"
