@@ -23,27 +23,9 @@
  * not, and the rollup on the left lists the domains that were turned down
  * beside the ones that were used.
  *
- * TODO(schema-gap: StalenessFlag): FIXTURE-ONLY, exactly as QueryTracePanel
- * is. The backend persists `query`, `liveValue` and ONE winning
- * `liveSourceUrl` (lib/types.ts) — the full result list, the per-result
- * accept/reject reasons, `rationale`, `triggeredBy` and `durationMs` are
- * discarded before any response is built. There is no endpoint that could
- * serve this screen until StalenessFlag (or a sibling type) grows
- * `results: TraceResult[]`, and the closing line on the screen says so in the
- * reader's words rather than only in this comment.
- *
- * TODO(schema-gap: Workspace): there is no workspace or portfolio entity
- * either — WorkspaceSources is assembled from the fixture run registry.
- *
- * Client component: it owns the query selection and the copy-to-clipboard
- * interaction, the same one QueryTracePanel owns.
- *
- * Token-pure: 1px --color-line borders, 5px status dots as the only marks,
- * weight ceiling 500, and NO shadow-action — a log has no primary action, so
- * the screen's single action shadow is spent on nothing.
- *
- * Layout: a shrink-0 summary strip, then two independently scrolling columns
- * inside a min-h-0 row. The page itself never scrolls.
+ * The traces behind this screen are real on a live run and replayed on the
+ * fixture run — see QueryTracePanel and lib/data/types.ts. This screen rolls
+ * them up by domain; it invents nothing the traces do not carry.
  */
 
 import { useEffect, useState } from "react";

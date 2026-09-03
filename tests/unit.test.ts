@@ -201,7 +201,12 @@ test("adaptRun orders flags first by materiality and converts pages to 1-based",
   }
   assert.equal(run.review.claimCount, 5);
   assert.equal(run.review.flagCount, 2);
-  assert.equal(run.review.queryCount, 1, "two traces share one query");
+  /* Two live checks ran, so the count is two. This asserted 1 with the note
+     "two traces share one query" — pinning the undercount rather than the
+     behaviour: queryCount was a Set of query STRINGS, and the registry's two
+     counterparty claims share one. The screen was reporting half the work the
+     run did. */
+  assert.equal(run.review.queryCount, 2, "one per live check, not per string");
   assert.equal(run.review.documents[0].pageCount, 2);
   assert.equal(run.review.documents[0].claimCount, 3);
   assert.equal(run.events[1].timestamp, "1:06");
@@ -250,7 +255,7 @@ test("applyLedger keeps a countersignature and its decision apart", () => {
    */
   const decision: AuditRecord = {
     flagId: "flag-x",
-    reviewer: "M. Bui",
+    reviewer: "Michelle",
     decision: "approved",
     signedAt: "2026-09-01T00:00:00.000Z",
     contentHash: "sha256:aaa",
@@ -260,11 +265,11 @@ test("applyLedger keeps a countersignature and its decision apart", () => {
   };
   const countersignature: AuditRecord = {
     ...decision,
-    reviewer: "P. Ramanathan",
+    reviewer: "Joseph",
     signedAt: "2026-09-01T01:00:00.000Z",
     contentHash: "sha256:bbb",
     countersigns: {
-      decidedByActorId: "actor-bui",
+      decidedByActorId: "actor-michelle",
       decidedAt: decision.signedAt,
       label: "Countersigned",
     },
@@ -279,12 +284,12 @@ test("applyLedger keeps a countersignature and its decision apart", () => {
      that is what this merge is for — and still leaves the endorsement alone.
      The sign route never sets `countersigns`, so a live row is always a
      decision. */
-  const real: AuditRecord = { ...decision, contentHash: "sha256:real", reviewer: "K. Shah" };
+  const real: AuditRecord = { ...decision, contentHash: "sha256:real", reviewer: "Kiran" };
   const replaced = applyLedger(run, [real]);
   assert.equal(replaced.auditRecords.length, 2);
   assert.equal(
     replaced.auditRecords.find((r) => !r.countersigns)?.reviewer,
-    "K. Shah",
+    "Kiran",
     "the live decision replaced the fixture one",
   );
   assert.ok(

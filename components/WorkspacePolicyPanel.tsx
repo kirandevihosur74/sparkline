@@ -55,7 +55,7 @@ export default function WorkspacePolicyPanel({
 }: WorkspacePolicyPanelProps) {
   return (
     <>
-      {/* "Workspace policy · 4 active rules · last modified by K. Shah, 12 Aug"
+      {/* "Workspace policy · 4 active rules · last modified by Kiran, 12 Aug"
           — assembled in lib/data, rendered here as one string so the count and
           the list below it cannot drift apart. */}
       <div className="shrink-0 border-b border-line bg-surface px-5 py-2.5">

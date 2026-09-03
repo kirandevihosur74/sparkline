@@ -489,7 +489,7 @@ export interface DecisionBarProps {
   /**
    * The signature line for the pending state: who is signing, in what
    * capacity, and where this finding sits in the queue —
-   * "Signing as M. Bui · Reviewer · finding 2 of 11".
+   * "Signing as Michelle · Reviewer · finding 2 of 11".
    *
    * Every part is DERIVED in lib/data: the name and role off the run's ledger,
    * the position off getFindings() in the order the queue renders it, so the
@@ -498,8 +498,8 @@ export interface DecisionBarProps {
    * reviewId), because a signature is only true of the ledger it was read off.
    *
    * It is NOT the same answer as `reviewer` above. getSigningActor() skips
-   * countersignatures — the last row on the demo ledger is P. Ramanathan's
-   * endorsement, and the reviewer at the keyboard is M. Bui, who made the
+   * countersignatures — the last row on the demo ledger is Joseph's
+   * endorsement, and the reviewer at the keyboard is Michelle, who made the
    * decision it endorses.
    *
    * TODO(schema-gap: session identity): none of this is a session. Identity
@@ -687,7 +687,7 @@ export default function DecisionBar({
           <div className="flex items-center justify-between gap-4 px-5 py-3">
             <div className="min-w-0">
               {/*
-               * "Signing as M. Bui · Reviewer · finding 2 of 11 · Nutrient DWS".
+               * "Signing as Michelle · Reviewer · finding 2 of 11 · Nutrient DWS".
                * Built from the signature's PARTS rather than its joined `text` so
                * the name can carry the emphasis and the rest stays metadata — the
                * segments and their order are still the data layer's. A run that

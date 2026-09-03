@@ -239,7 +239,7 @@ const GAP = {
   noPairLink:
     "Nothing links this claim to the matching claim in the other document. The agreement is described in the note above and is not stored as a relation, so the pair cannot be resolved from the record.",
   staleTraceIsFixture:
-    "The result list, the per-result accept and reject reasons, the query rationale, the routing rule and the call duration are fixture-only. The backend persists the query, the live value and one winning URL, and discards the rest (TODO(schema-gap: StalenessFlag)).",
+    "This run replays a search recorded in the query log rather than one made just now, so the timing and the ranking are the log's. A live run puts its own search here — every result it read, with the decision it made about each.",
   noComparison:
     "There is no comparison behind this verdict, so there is no query, no counter-value and no threshold to show. The record holds the claim and nothing else.",
   /**

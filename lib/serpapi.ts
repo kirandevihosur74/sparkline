@@ -150,6 +150,11 @@ function isAuthoritative(domain: string): boolean {
 const ADVERSE_STATUS = /chapter 11|bankruptcy|insolvenc|ceased operations|liquidat/i;
 const SCALE_PHRASE = /largest residential solar installers/i;
 const FILING_DATE = /(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+20\d{2}/i;
+/* The tax-credit claim's parse targets (docs/serpapi-query-log.md §13.7). Both
+   have to be present: "tax credit" alone matches half the solar press, and a
+   deadline alone could belong to any programme. */
+const ITC_TERMS = /investment tax credit|solar tax credit|section 48|section 25d/i;
+const ITC_DEADLINE_TERMS = /placed in service|in service by|deadline|expires?/i;
 
 export interface ExternalCheckResult {
   state: ClaimState;
@@ -202,6 +207,21 @@ export async function checkClaimExternal(
         reason = "Non-authoritative domain — status mentioned but not from a primary source";
       } else {
         reason = "Non-authoritative domain, no status information";
+      }
+    } else if (claim.claimType === "ITC_DEADLINE") {
+      /* A public rule, so only a primary source can settle it — .gov is in the
+         allowlist and is what the query log saw at top-1. Trade press
+         restating the rule is not the rule. */
+      const carries = ITC_TERMS.test(text) && ITC_DEADLINE_TERMS.test(text);
+      if (authoritative && carries) {
+        decision = "accepted";
+        reason = "Authoritative source; credit and in-service timing both parseable in snippet";
+      } else if (authoritative) {
+        reason = "Authoritative domain, but the snippet does not state the in-service timing";
+      } else if (carries) {
+        reason = "States the timing, but not from a primary source";
+      } else {
+        reason = "Snippet carries neither the credit nor its timing";
       }
     } else if (claim.claimType === "COUNTERPARTY_SCALE") {
       if (SCALE_PHRASE.test(text)) {
@@ -262,6 +282,24 @@ export async function checkClaimExternal(
       };
     }
     // No adverse evidence from an authoritative source — cannot conclude.
+    return { state: "UNVERIFIED", evidence: evidenceBase };
+  }
+
+  if (claim.claimType === "ITC_DEADLINE") {
+    /* CORROBORATED when a primary source carries the rule the memo restates.
+       No winner means the search did not settle it — UNVERIFIED, never a
+       guess dressed as a verdict (§11.13). */
+    if (winner) {
+      return {
+        state: "CORROBORATED",
+        evidence: {
+          ...evidenceBase,
+          sourceUrl: winner.url,
+          sourceDomain: winner.domain,
+          liveValue: "in-service timing for the federal credit confirmed against a primary source",
+        },
+      };
+    }
     return { state: "UNVERIFIED", evidence: evidenceBase };
   }
 
