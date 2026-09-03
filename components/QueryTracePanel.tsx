@@ -11,13 +11,12 @@
  * accepted one — it is the evidence that the pipeline read the page and turned
  * it down, rather than never seeing it.
  *
- * TODO(schema-gap: StalenessFlag): everything below is FIXTURE-ONLY. The
- * backend persists `query`, `liveValue` and ONE winning `liveSourceUrl`
- * (lib/types.ts) — the result list, the per-result accept/reject reasons,
- * `rationale`, `triggeredBy` and `durationMs` are all discarded before any
- * response is built. This panel has no live data source until StalenessFlag
- * (or a sibling type) grows `results: TraceResult[]`. See the full statement
- * of the gap on QueryTrace in lib/data/types.ts.
+ * This panel HAS a live data source. lib/serpapi.ts returns every result it
+ * considered with the decision made about it, and adapt.ts maps that onto
+ * QueryTrace — so on a live run everything below is the run's own search. The
+ * fixture run replays a trace authored from docs/serpapi-query-log.md so the
+ * demo works offline. An earlier version of this comment said the backend
+ * discarded the result list; it does not, and has not for some time.
  *
  * Client component: it owns the copy-to-clipboard interaction.
  *

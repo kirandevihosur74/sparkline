@@ -70,15 +70,18 @@ export function normalizeConfidence(dwsConfidence: number): number {
  * One search result inside a live-verification trace, with the reviewer-visible
  * accept/reject decision the pipeline made about it.
  *
- * TODO(schema-gap: StalenessFlag): the backend persists only `query`,
- * `liveValue`, and ONE winning `liveSourceUrl` (lib/types.ts:31-42) — the full
- * result list and per-result decisions are discarded before they reach any
- * response. QueryTrace is fixture-only until StalenessFlag (or a sibling
- * type) is extended with `results: TraceResult[]`. The same gap covers
- * `rationale`, `triggeredBy` and `durationMs` below: the backend records the
- * query string but not why it was built, which rule routed the claim, or how
- * long the call took. Content sourced from docs/serpapi-query-log.md +
- * docs/demo-claims.md so it matches what the backend will eventually produce.
+ * A trace is REAL on a live run. `checkClaimExternal` in lib/serpapi.ts reads
+ * the top 8 organic results and returns every one of them with the decision it
+ * made and the reason for it (`ExternalEvidence.results`), and
+ * adapt.ts's `traceFor` maps that straight onto this type. Nothing is
+ * discarded. `durationMs` is the measured call; `triggeredBy` is derived from
+ * the claim type; `rationale` is composed rather than stored, which is the one
+ * part of this shape the backend does not itself produce.
+ *
+ * The FIXTURE run replays a trace authored from docs/serpapi-query-log.md, so
+ * the demo works offline and without a key. That is the only sense in which
+ * any of this is fixture-only, and it is a property of that one run rather
+ * than of the type.
  */
 export interface TraceResult {
   position: number;
@@ -91,7 +94,7 @@ export interface TraceResult {
   reason: string;
 }
 
-/** Fixture-only for now — see TODO(schema-gap: StalenessFlag) above. */
+/** Real on a live run, replayed on the fixture run — see above. */
 export interface QueryTrace {
   flagId: string;
   query: string;

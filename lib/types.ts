@@ -10,7 +10,8 @@ export type ClaimType =
   | "WARRANTY"
   | "MODULE_SPEC"
   | "OM_COST"
-  | "AGREEMENT_DATE";
+  | "AGREEMENT_DATE"
+  | "ITC_DEADLINE";
 
 /** Trust states every material claim resolves into (plan §11.10). */
 export type ClaimState =

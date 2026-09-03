@@ -334,7 +334,16 @@ export function adaptRun(stored: StoredRun): RunData {
   const queryTraces = result.verdicts
     .map((verdict) => traceFor(verdict, findings))
     .filter((t): t is QueryTrace => t !== undefined);
-  const uniqueQueries = new Set(queryTraces.map((t) => t.query)).size;
+  /*
+   * How many live checks RAN — not how many distinct strings they used.
+   *
+   * This counted `new Set(query)`, and two of the registry's external claims
+   * share one query string, so two real SerpApi searches reported as one. The
+   * screen was undercounting the work the run actually did, which is the
+   * mirror image of the invention this project refuses: a number that is
+   * lower than the truth is still not the truth.
+   */
+  const liveCheckCount = queryTraces.length;
 
   const stages = stored.stages.map(toPipelineStage);
   const events = stored.events.map(toPipelineEvent);
@@ -348,7 +357,7 @@ export function adaptRun(stored: StoredRun): RunData {
     documents,
     claimCount: claims.length,
     flagCount: flags.length,
-    queryCount: uniqueQueries,
+    queryCount: liveCheckCount,
     trustScore: trustOf(result),
   };
 
