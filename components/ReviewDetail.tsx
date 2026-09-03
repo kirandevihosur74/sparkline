@@ -813,14 +813,35 @@ function DocumentPane({
            pane was a block in a scrolling page — so its 480px floor always
            won, and it showed 43% of a letter page. A flex child with a real
            height is what makes that `h-full` mean something. */
-        <div className="min-h-0 flex-1">
-          <ViewerEmbed
-            ref={viewerRef}
-            documentUrl={documentUrl(active.source.documentId)}
-            page={claimPage}
-            onVisiblePageChange={setVisiblePage}
-          />
-        </div>
+        <>
+          <div className="min-h-0 flex-1">
+            <ViewerEmbed
+              ref={viewerRef}
+              documentUrl={documentUrl(active.source.documentId)}
+              page={claimPage}
+              onVisiblePageChange={setVisiblePage}
+            />
+          </div>
+          {/*
+           * The PDF's own provenance line, answering the question switching to
+           * it raises: every claim box just disappeared, and nothing said why.
+           * They are gone because this view is the FILE — no record carries a
+           * coordinate on the page (TODO(schema-gap: bbox)), so there is
+           * nothing to draw a box from here, and drawing one would mean
+           * inventing a position.
+           *
+           * It also gives this branch the caption the marked-text branch has,
+           * so the page area no longer resizes under the reviewer when they
+           * toggle. The claim key is still marked-text only, and stays that
+           * way: a key is a promise about what is on the page, and this page
+           * has no boxes to name.
+           */}
+          <p className="shrink-0 text-caption text-ink-3">
+            The source file as delivered · rendered by Nutrient Web SDK. Claims
+            are not marked here — the run recorded a page for each, but no
+            coordinates on it.
+          </p>
+        </>
       )}
 
       {/* The key names the four box colours — the fourth only while show-all
