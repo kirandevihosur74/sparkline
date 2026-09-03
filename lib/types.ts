@@ -152,6 +152,8 @@ export interface AnalysisResult {
   analyzedAt: string;
   /** Page count per document, from the DWS text layer. */
   pages?: Record<string, number>;
+  /** Date each document prints on itself (ISO date), when one was found. */
+  dates?: Record<string, string>;
   /** Present when the live check was refused or failed part-way. */
   liveCheckFailure?: LiveCheckFailure;
 }

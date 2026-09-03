@@ -145,9 +145,16 @@ export interface DocumentMeta {
   title: string;
   /** Issuing party as printed on the document. */
   author: string;
-  docType: "investment-memo" | "engineering-report";
+  docType: "investment-memo" | "engineering-report" | "document";
   /**
-   * Date printed on the document (ISO date, no time).
+   * Where the viewer loads the PDF from. Sample documents are served from
+   * /public as /<id>.pdf; an uploaded document is served by
+   * /api/documents/<review>/<id>. Absent means the /public convention.
+   */
+  url?: string;
+  /**
+   * Date printed on the document (ISO date, no time). Empty when the document
+   * carries none the run could find — the slot then says so.
    *
    * Distinct from `uploadedAt`: this is the document's own date and is
    * load-bearing for the staleness beat — the memo is dated before the

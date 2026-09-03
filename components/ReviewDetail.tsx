@@ -817,7 +817,7 @@ function DocumentPane({
           <div className="min-h-0 flex-1">
             <ViewerEmbed
               ref={viewerRef}
-              documentUrl={documentUrl(active.source.documentId)}
+              documentUrl={documentUrl(active.source.documentId, documents)}
               page={claimPage}
               onVisiblePageChange={setVisiblePage}
             />
@@ -828,7 +828,8 @@ function DocumentPane({
            * They are gone because this view is the FILE — no record carries a
            * coordinate on the page (TODO(schema-gap: bbox)), so there is
            * nothing to draw a box from here, and drawing one would mean
-           * inventing a position.
+           * inventing a position. True of an uploaded file as much as a
+           * committed one: the upload route stores the document, not boxes.
            *
            * It also gives this branch the caption the marked-text branch has,
            * so the page area no longer resizes under the reviewer when they
@@ -934,8 +935,10 @@ function PageContextReporter({
   return null;
 }
 
-function documentUrl(documentId: string): string {
-  return `/${documentId}.pdf`;
+function documentUrl(documentId: string, documents: DocumentMeta[]): string {
+  // An uploaded document is served by the app; a sample document sits in
+  // /public under its id. DocumentMeta.url carries the answer when it differs.
+  return documents.find((doc) => doc.id === documentId)?.url ?? `/${documentId}.pdf`;
 }
 
 /**

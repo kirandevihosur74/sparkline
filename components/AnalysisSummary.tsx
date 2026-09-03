@@ -72,6 +72,7 @@ import type {
   Finding,
   PipelineStage,
   RunHistory,
+  TrustFormula,
   TrustScoreBreakdown,
 } from "@/lib/data";
 import { formatUtc } from "@/lib/format";
@@ -95,6 +96,8 @@ export interface AnalysisSummaryProps {
   breakdown: TrustScoreBreakdown;
   /** Resolves the claim ids a failed stage stranded, for ErrorPanel. */
   claims: ExtractedClaim[];
+  /** From `getTrustFormula(reviewId)`, resolved on the server — see AnalysisScreen. */
+  formula?: TrustFormula;
   /** This run's review workspace. */
   reviewHref: string;
   /** Puts the run back into its analyzing state. */
@@ -111,6 +114,7 @@ export default function AnalysisSummary({
   breakdown,
   claims,
   reviewHref,
+  formula,
   onReplay,
 }: AnalysisSummaryProps) {
   const router = useRouter();
@@ -201,7 +205,7 @@ export default function AnalysisSummary({
           ) : null}
 
           {/* ── 3 · the score, then the counts that produced it ─────────── */}
-          <TrustScorePanel breakdown={breakdown} coverage={coverage} />
+          <TrustScorePanel breakdown={breakdown} coverage={coverage} formula={formula} />
 
           {/* ── 4 · what moved since the run this one re-ran ─────────────
               Its own bordered strip, so the trust layout above it — dial,

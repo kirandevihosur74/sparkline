@@ -16,6 +16,7 @@
 import type { Metadata } from "next";
 import NewReviewComposer from "@/components/NewReviewComposer";
 import { DEMO_REVIEW_ID, getDocuments, getReview, getStages } from "@/lib/data";
+import { MAX_UPLOAD_BYTES } from "@/lib/runs/bundle";
 
 export const metadata: Metadata = {
   title: "New review · Sparkline",
@@ -39,6 +40,7 @@ export default function NewReviewPage() {
       // committed replay is still offered so the demo never dead-ends.
       liveRunAvailable={Boolean(process.env.NUTRIENT_API_KEY && process.env.SERPAPI_API_KEY)}
       replayHref={review ? `/reviews/${review.id}?state=analyzing` : undefined}
+      maxUploadBytes={MAX_UPLOAD_BYTES}
     />
   );
 }

@@ -3,25 +3,20 @@
 /**
  * NewReviewComposer — the body of screen 1, `/reviews/new`.
  *
- * Two labelled DocumentSlots, a loader for the one bundle that actually runs,
- * and the screen's single primary action pinned in a footer that never
- * scrolls away.
+ * Two labelled DocumentSlots, each a real dropzone: pick or drop a PDF and it
+ * is sent with the run. The committed sample bundle is offered beside them
+ * as the quick path — it fills whichever slots are still empty, so a reviewer
+ * can check their own memo against the sample engineering report.
  *
- * Client component for two reasons: whether the slots are filled is local UI
- * state (the sample bundle is loaded on click, not on load), and "Run
- * analysis" is the one place this screen talks to the server — it POSTs
- * /api/runs to start the real pipeline and routes to the run it created.
- * Every value it renders still arrives as a prop from the data layer.
+ * "Run analysis" is the one place this screen talks to the server: it POSTs
+ * /api/runs (multipart when a file was picked) and routes to the run it
+ * created. Every value it renders still arrives as a prop from the data
+ * layer, except the preview card for a picked file, which is read off the
+ * file itself and says what the run has not counted yet.
  *
  * Shadow discipline: `shadow-action` appears on exactly one element, the
  * "Run analysis" button, and Tailwind's `disabled:shadow-none` takes it away
- * while the slots are empty (the same pattern DecisionBar uses for Approve).
- * No other element on this screen has a shadow.
- *
- * TODO(schema-gap: Document): there is no upload endpoint and no Document
- * entity — see the marker on components/DocumentSlot.tsx. The consequence is
- * visible in this component's copy rather than hidden behind a file picker
- * that could not work.
+ * while a slot is empty (the same pattern DecisionBar uses for Approve).
  */
 
 import { useState } from "react";
@@ -29,23 +24,27 @@ import { useRouter } from "next/navigation";
 import DocumentSlot, { formatFileSize } from "@/components/DocumentSlot";
 import type { DocumentMeta, PipelineStage } from "@/lib/data";
 
+type SlotId = "doc-a" | "doc-b";
+
 /**
  * The two positions a review compares. Slot names and their descriptions are
  * chrome — the documents that fill them are data. Order matches the data
  * layer's slot order (getDocuments returns the memo first).
  */
-const SLOTS = [
+const SLOTS: ReadonlyArray<{ id: SlotId; field: string; label: string; role: string }> = [
   {
-    key: "primary",
+    id: "doc-a",
+    field: "docA",
     label: "Primary document",
     role: "The document under review. Every claim in it is extracted first.",
   },
   {
-    key: "cross-reference",
+    id: "doc-b",
+    field: "docB",
     label: "Cross-reference document",
     role: "Checked against the primary, claim by claim, to surface disagreements.",
   },
-] as const;
+];
 
 export interface NewReviewComposerProps {
   /**
@@ -65,12 +64,30 @@ export interface NewReviewComposerProps {
   stages: PipelineStage[];
   /**
    * Whether the server has both provider keys. When it does, "Run analysis"
-   * starts a live run; when it does not, the committed replay is offered
-   * instead so the demo never dead-ends.
+   * starts a live run; when it does not, the committed replay is offered for
+   * the sample bundle so the demo never dead-ends (uploads need a live run).
    */
   liveRunAvailable: boolean;
   /** The committed run's analyzing state — the fallback when no live run can start. */
   replayHref?: string;
+  /** Largest upload the server accepts, in bytes. */
+  maxUploadBytes: number;
+}
+
+/** What a picked file looks like in a slot before the run has read it. */
+function previewOf(file: File, id: SlotId): DocumentMeta {
+  return {
+    id,
+    title: file.name.replace(/\.[Pp][Dd][Ff]$/, "").replace(/[_-]+/g, " ").trim() || "Untitled document",
+    author: "Uploaded from your computer",
+    docType: "document",
+    datedAt: "",
+    pageCount: 0,
+    fileName: file.name,
+    sizeBytes: file.size,
+    uploadedAt: new Date(file.lastModified || Date.now()).toISOString(),
+    claimCount: 0,
+  };
 }
 
 export default function NewReviewComposer({
@@ -80,21 +97,49 @@ export default function NewReviewComposer({
   stages,
   liveRunAvailable,
   replayHref,
+  maxUploadBytes,
 }: NewReviewComposerProps) {
   const router = useRouter();
-  const [loaded, setLoaded] = useState(false);
+  const [picked, setPicked] = useState<Partial<Record<SlotId, File>>>({});
+  const [useSample, setUseSample] = useState<Record<SlotId, boolean>>({
+    "doc-a": false,
+    "doc-b": false,
+  });
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   const bundleComplete = bundle.length >= SLOTS.length;
-  const filled = loaded ? bundle.slice(0, SLOTS.length) : [];
-  const runnable = liveRunAvailable || replayHref !== undefined;
-  const canRun = filled.length === SLOTS.length && runnable && !starting;
 
-  const totalPages = filled.reduce((sum, doc) => sum + doc.pageCount, 0);
-  const totalSize = formatFileSize(
-    filled.reduce((sum, doc) => sum + doc.sizeBytes, 0),
-  );
+  /** What each slot shows: the picked file, else the sample document, else nothing. */
+  const slotDocs = SLOTS.map((slot, index) => {
+    const file = picked[slot.id];
+    if (file) return previewOf(file, slot.id);
+    if (useSample[slot.id]) return bundle[index];
+    return undefined;
+  });
+  const filled = slotDocs.filter((doc): doc is DocumentMeta => doc !== undefined);
+  const pickedCount = Object.values(picked).filter(Boolean).length;
+  const allFilled = filled.length === SLOTS.length;
+  const anySampleLoaded = SLOTS.some((slot) => useSample[slot.id]);
+
+  // Uploads need the live pipeline; the sample bundle can fall back to replay.
+  const runnable = liveRunAvailable || (pickedCount === 0 && replayHref !== undefined);
+  const canRun = allFilled && runnable && !starting;
+
+  const knownPages = filled.reduce((sum, doc) => sum + doc.pageCount, 0);
+  const uncounted = filled.some((doc) => doc.pageCount === 0);
+  const totalSize = formatFileSize(filled.reduce((sum, doc) => sum + doc.sizeBytes, 0));
+
+  const loadSample = () =>
+    setUseSample({
+      "doc-a": !picked["doc-a"],
+      "doc-b": !picked["doc-b"],
+    });
+  const clearAll = () => {
+    setPicked({});
+    setUseSample({ "doc-a": false, "doc-b": false });
+    setError(undefined);
+  };
 
   const run = async () => {
     setError(undefined);
@@ -104,12 +149,20 @@ export default function NewReviewComposer({
     }
     setStarting(true);
     try {
-      const response = await fetch("/api/runs", { method: "POST" });
-      const body = (await response.json()) as { id?: string; error?: string };
-      if (!response.ok || !body.id) {
-        throw new Error(body.error ?? `The run could not be started (HTTP ${response.status}).`);
+      let body: FormData | undefined;
+      if (pickedCount > 0) {
+        body = new FormData();
+        for (const slot of SLOTS) {
+          const file = picked[slot.id];
+          if (file) body.append(slot.field, file, file.name);
+        }
       }
-      router.push(`/reviews/${encodeURIComponent(body.id)}?state=analyzing`);
+      const response = await fetch("/api/runs", { method: "POST", body });
+      const result = (await response.json()) as { id?: string; error?: string };
+      if (!response.ok || !result.id) {
+        throw new Error(result.error ?? `The run could not be started (HTTP ${response.status}).`);
+      }
+      router.push(`/reviews/${encodeURIComponent(result.id)}?state=analyzing`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setStarting(false);
@@ -117,12 +170,26 @@ export default function NewReviewComposer({
   };
 
   const footerNote = (() => {
-    if (starting) return "Recording the run and handing the bundle to Nutrient DWS…";
+    if (starting) {
+      return pickedCount > 0
+        ? "Uploading and handing the documents to Nutrient DWS…"
+        : "Recording the run and handing the bundle to Nutrient DWS…";
+    }
     if (error) return error;
-    if (filled.length !== SLOTS.length) return "Load the sample bundle to enable this.";
-    if (!runnable) return "There is no run to open: the demo review is not in the data layer.";
+    if (!allFilled) {
+      return pickedCount > 0
+        ? "Fill the other slot — upload a second PDF, or load the sample bundle into it."
+        : "Upload two PDFs, or load the sample bundle.";
+    }
+    if (!runnable) {
+      return pickedCount > 0
+        ? "Uploads need both provider keys on the server. Load the sample bundle to open the recorded run instead."
+        : "There is no run to open: the demo review is not in the data layer.";
+    }
     if (liveRunAvailable) {
-      return "Runs the pipeline live: Nutrient DWS reads both documents, Sparkline compares the claims, SerpApi checks what only the public record can settle.";
+      return pickedCount > 0
+        ? "Runs the pipeline live on your files: Nutrient DWS reads both documents, Sparkline compares the claims, SerpApi checks what only the public record can settle."
+        : "Runs the pipeline live: Nutrient DWS reads both documents, Sparkline compares the claims, SerpApi checks what only the public record can settle.";
     }
     return "Opens the committed run: provider keys are not configured on this server, so this build replays a recorded analysis.";
   })();
@@ -138,19 +205,33 @@ export default function NewReviewComposer({
               Cross-check two documents
             </h1>
             <p className="mt-2 max-w-2xl text-body text-ink-2">
-              Sparkline extracts every claim from a primary document, compares
-              it against a cross-reference, and checks what disagrees against
-              live public sources before routing anything to you.
+              Upload the two documents you want checked against each other and
+              against the public record, or load the sample bundle. Sparkline
+              extracts every claim, compares them, and routes anything doubtful
+              to you.
             </p>
           </header>
 
           <div className="grid gap-4 md:grid-cols-2">
             {SLOTS.map((slot, index) => (
               <DocumentSlot
-                key={slot.key}
+                key={slot.id}
                 label={slot.label}
                 role={slot.role}
-                document={filled[index]}
+                document={slotDocs[index]}
+                maxBytes={maxUploadBytes}
+                onPick={(file) => {
+                  setError(undefined);
+                  setPicked((current) => ({ ...current, [slot.id]: file }));
+                }}
+                onClear={() => {
+                  setPicked((current) => {
+                    const next = { ...current };
+                    delete next[slot.id];
+                    return next;
+                  });
+                  setUseSample((current) => ({ ...current, [slot.id]: false }));
+                }}
               />
             ))}
           </div>
@@ -161,9 +242,10 @@ export default function NewReviewComposer({
               bundleComplete={bundleComplete}
               reviewTitle={reviewTitle}
               reviewSubtitle={reviewSubtitle}
-              loaded={loaded}
-              onLoad={() => setLoaded(true)}
-              onClear={() => setLoaded(false)}
+              loaded={anySampleLoaded}
+              pickedCount={pickedCount}
+              onLoad={loadSample}
+              onClear={clearAll}
             />
             <RunOutline stages={stages} />
           </div>
@@ -175,11 +257,19 @@ export default function NewReviewComposer({
       <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-line bg-subtle px-8 py-3.5">
         <div className="min-w-0">
           <p aria-live="polite" className="tabular text-label text-ink-2">
-            {filled.length === SLOTS.length
-              ? `${filled.length} documents queued · ${totalPages} pages${
-                  totalSize ? ` · ${totalSize}` : ""
+            {allFilled
+              ? `${filled.length} documents queued${
+                  uncounted
+                    ? knownPages > 0
+                      ? ` · ${knownPages} pages + pages counted at run`
+                      : " · pages counted at run"
+                    : ` · ${knownPages} pages`
+                }${totalSize ? ` · ${totalSize}` : ""}${
+                  pickedCount > 0 ? ` · ${pickedCount} uploaded` : ""
                 }`
-              : "Both slots are empty."}
+              : filled.length === 1
+                ? "One slot filled."
+                : "Both slots are empty."}
           </p>
           <p
             aria-live="polite"
@@ -195,11 +285,9 @@ export default function NewReviewComposer({
           disabled={!canRun}
           onClick={run}
           /* Disabled is a COLOUR PAIR, not just a background swap: `text-surface`
-             is the inverse of ink and only reads on `bg-ink`. Left on a
-             `line-strong` slab the label measured 1.52:1 in light and 1.78:1
-             in dark — an unreadable primary action. `line` + `ink-2` keeps
-             the button's shape and clears AA in both themes (6.43:1 / 5.07:1),
-             the same pair ErrorPanel's disabled retry already uses. */
+             is the inverse of ink and only reads on `bg-ink`. `line` + `ink-2`
+             keeps the button's shape and clears AA in both themes, the same pair
+             ErrorPanel's disabled retry uses. */
           className="rounded bg-ink px-3.5 py-2 text-body font-medium text-surface shadow-action hover:shadow-action-hover focus-visible:shadow-selected focus-visible:outline-none disabled:bg-line disabled:text-ink-2 disabled:shadow-none"
         >
           {starting ? "Starting run…" : "Run analysis"}
@@ -210,9 +298,8 @@ export default function NewReviewComposer({
 }
 
 /**
- * The loader for the one pair of documents that exists in this build. It names
- * the review the pair produces so the reviewer knows what they are about to
- * open, and counts the bundle from the bundle itself.
+ * The committed pair of documents, offered beside the upload slots. Loading it
+ * fills the slots that are still empty, so a reviewer's own upload is kept.
  */
 function SampleBundle({
   bundle,
@@ -220,6 +307,7 @@ function SampleBundle({
   reviewTitle,
   reviewSubtitle,
   loaded,
+  pickedCount,
   onLoad,
   onClear,
 }: {
@@ -228,12 +316,13 @@ function SampleBundle({
   reviewTitle?: string;
   reviewSubtitle?: string;
   loaded: boolean;
+  pickedCount: number;
   onLoad: () => void;
   onClear: () => void;
 }) {
   return (
     <section className="flex flex-col rounded border border-line bg-surface px-5 py-4">
-      <h2 className="text-micro uppercase text-ink-3">Sample bundle</h2>
+      <h2 className="text-micro uppercase text-ink-3">Or use the sample bundle</h2>
 
       {reviewTitle ? (
         <p className="mt-1.5 text-title font-medium text-ink">{reviewTitle}</p>
@@ -253,9 +342,12 @@ function SampleBundle({
           : `${bundle.length} committed ${
               bundle.length === 1 ? "document" : "documents"
             } · ${bundle.map((doc) => doc.fileName).join(", ")}`}
+        {pickedCount > 0 && !loaded
+          ? " · fills only the slot you have not uploaded to"
+          : ""}
       </p>
 
-      <div className="mt-auto pt-4">
+      <div className="mt-auto flex items-center gap-3 pt-4">
         {bundleComplete ? (
           <button
             type="button"
@@ -267,11 +359,20 @@ function SampleBundle({
         ) : (
           /* Consequence before cause: the button is gone, and why. */
           <p className="text-caption text-ink-3">
-            The slots cannot be filled: the bundle carries{" "}
+            The slots cannot be filled from the bundle: it carries{" "}
             {bundle.length === 1 ? "one document" : `${bundle.length} documents`}{" "}
             and a review compares {SLOTS.length}.
           </p>
         )}
+        {pickedCount > 0 && !loaded ? (
+          <button
+            type="button"
+            onClick={onClear}
+            className="text-label font-medium text-ink-2 underline underline-offset-4 hover:text-ink focus-visible:shadow-selected focus-visible:outline-none"
+          >
+            Clear uploads
+          </button>
+        ) : null}
       </div>
     </section>
   );
