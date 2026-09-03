@@ -1,5 +1,6 @@
 import { NutrientClient } from "@nutrient-sdk/dws-client-typescript";
 import { CLAIM_REGISTRY, type ClaimDef } from "./claims-registry";
+import { sniffPrintedDate } from "./dates";
 import type { ExtractedClaim } from "./types";
 
 // DWS Processor API client (extraction + conversion + signing).
@@ -220,6 +221,8 @@ export interface ExtractedDocument {
   claims: ExtractedClaim[];
   /** Pages in the DWS text layer. */
   pageCount: number;
+  /** The date the document prints on itself, when the first pages carry one. */
+  printedDate?: string;
 }
 
 /**
@@ -242,7 +245,12 @@ export async function extractDocument(
     const claim = matchClaim(def, documentId, tables, kvps, pageTexts);
     if (claim) claims.push(claim);
   }
-  return { documentId, claims, pageCount: pageTexts.length };
+  return {
+    documentId,
+    claims,
+    pageCount: pageTexts.length,
+    printedDate: sniffPrintedDate(pageTexts.slice(0, 2).join("\n")),
+  };
 }
 
 /** Claims only — the original Day-2 surface, kept for scripts and routes. */

@@ -4274,6 +4274,7 @@ function listedRunIds(): string[] {
 const DOC_TYPE_LABEL: Record<DocumentMeta["docType"], string> = {
   "investment-memo": "Investment memo",
   "engineering-report": "Engineering report",
+  document: "Document",
 };
 
 /** Why a superseded revision cannot be opened. Consequence, then cause. */

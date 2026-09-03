@@ -36,8 +36,8 @@ Run the app:
 npm run dev              # http://localhost:3000
 ```
 
-Demo path: **/ (landing) → Launch Sparkline → Load sample bundle → Run
-analysis**. That starts a
+Demo path: **/ (landing) → Launch Sparkline → upload two PDFs (or Load sample
+bundle) → Run analysis**. That starts a
 real run (`POST /api/runs`): DWS reads both PDFs, Sparkline compares the
 claims, SerpApi checks the counterparty against the public record. The
 analyzing screen polls the run as the pipeline writes it; the results screen,
@@ -45,6 +45,11 @@ review workspace and audit ledger all render that run. Approving or rejecting
 a finding calls `POST /api/sign`, which renders the decision to PDF and signs
 it with DWS — the strip and the ledger show the SHA-256 of the signed bytes
 and link to the PDF.
+
+Uploads: each slot on `/reviews/new` takes a PDF (picker or drop, 25 MB cap);
+a slot left empty keeps the sample document. Files live under
+`data/uploads/<run>/`, the printed date is read from the text layer, and the
+viewer loads them from `/api/documents/<run>/<doc>`.
 
 Without provider keys the app still opens the committed fixture run
 (`/reviews/demo-2026-08`), which replays a recorded analysis.
@@ -66,7 +71,7 @@ lib/
 └── data/             # the data layer the UI reads: fixtures, live-run adapter, registry
 components/           # screens 1–6 (see DESIGN_SYSTEM.md, docs/walkthrough.md)
 documents/            # synthetic demo PDFs (see documents/README.md)
-docs/                 # demo claims, query log, video script, live-run notes
+docs/                 # architecture (Mermaid), demo claims, query log, video script, live-run notes
 scripts/              # smoke tests, run:live, test:pipeline, test:e2e
 data/                 # runtime output (runs, ledgers, signed records) — gitignored
 ```

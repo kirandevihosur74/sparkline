@@ -47,6 +47,7 @@ import type {
   Finding,
   PipelineEvent,
   PipelineStage,
+  TrustFormula,
   TrustScoreBreakdown,
 } from "@/lib/data";
 
@@ -220,6 +221,12 @@ export interface AnalysisScreenProps {
   coverage: CoverageBreakdown;
   /** From `getTrustBreakdown()` — the dial and the parts it is made of. */
   breakdown: TrustScoreBreakdown;
+  /**
+   * From `getTrustFormula(reviewId)` — the strip under the dial, resolved on
+   * the server so a live run explains its own number (the dial cannot read the
+   * live-run registry from the client).
+   */
+  formula?: TrustFormula;
   /** From `getClaims()` — resolves the ids a failed stage stranded. */
   claims: ExtractedClaim[];
   /** Where the primary action goes: this run's review workspace. */
@@ -241,6 +248,7 @@ export default function AnalysisScreen({
   findings,
   coverage,
   breakdown,
+  formula,
   claims,
   reviewHref,
   initialPhase,
@@ -329,6 +337,7 @@ export default function AnalysisScreen({
       findings={findings}
       coverage={coverage}
       breakdown={breakdown}
+      formula={formula}
       claims={claims}
       reviewHref={reviewHref}
       onReplay={replay}

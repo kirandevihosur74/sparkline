@@ -304,7 +304,11 @@ export function adaptRun(stored: StoredRun): RunData {
     title: doc.title,
     author: doc.author,
     docType: doc.docType,
-    datedAt: doc.datedAt,
+    datedAt: doc.datedAt || result.dates?.[doc.id] || "",
+    url:
+      doc.source === "upload"
+        ? `/api/documents/${encodeURIComponent(stored.id)}/${encodeURIComponent(doc.id)}`
+        : `/${doc.id}.pdf`,
     pageCount: result.pages?.[doc.id] ?? 0,
     fileName: doc.fileName,
     sizeBytes: stored.sizes[doc.id] ?? 0,
@@ -337,8 +341,8 @@ export function adaptRun(stored: StoredRun): RunData {
 
   const review: ReviewSummary = {
     id: stored.id,
-    title: SAMPLE_REVIEW.title,
-    subtitle: `${SAMPLE_REVIEW.subtitle} · live run`,
+    title: stored.title ?? SAMPLE_REVIEW.title,
+    subtitle: stored.subtitle ?? `${SAMPLE_REVIEW.subtitle} · live run`,
     createdAt: stored.createdAt,
     status: stored.status === "analyzing" ? "analyzing" : "complete",
     documents,

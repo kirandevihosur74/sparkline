@@ -21,6 +21,9 @@ export interface StoredRun {
   createdAt: string;
   completedAt?: string;
   status: RunStatus;
+  /** Review title/subtitle for an uploaded bundle; the sample review's otherwise. */
+  title?: string;
+  subtitle?: string;
   bundle: BundleDocument[];
   /** PDF size on disk per document id, bytes. */
   sizes: Record<string, number>;
@@ -34,6 +37,7 @@ const DATA_ROOT = path.join(process.cwd(), "data");
 const RUNS_DIR = path.join(DATA_ROOT, "runs");
 const LEDGERS_DIR = path.join(DATA_ROOT, "ledgers");
 const RECORDS_DIR = path.join(DATA_ROOT, "records");
+const UPLOADS_DIR = path.join(DATA_ROOT, "uploads");
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,120}$/;
 
@@ -147,4 +151,35 @@ export function loadRecordPdf(reviewId: string, flagId: string): Buffer | undefi
 export function deleteRecordPdf(reviewId: string, flagId: string) {
   const file = recordPath(reviewId, flagId);
   if (existsSync(file)) unlinkSync(file);
+}
+
+// ---- Uploaded documents ----------------------------------------------------
+
+/** PDF files start with "%PDF-". Anything else is refused before it is stored. */
+export function looksLikePdf(bytes: Buffer): boolean {
+  return bytes.length > 5 && bytes.subarray(0, 5).toString("latin1") === "%PDF-";
+}
+
+/** Project-relative path an uploaded slot is stored at. */
+export function uploadPath(runId: string, docId: string): string {
+  return path.join("data", "uploads", fileSafe(runId), `${fileSafe(docId)}.pdf`);
+}
+
+export function saveUpload(runId: string, docId: string, bytes: Buffer): string {
+  const rel = uploadPath(runId, docId);
+  const abs = path.join(process.cwd(), rel);
+  mkdirSync(path.dirname(abs), { recursive: true });
+  writeFileSync(abs, bytes);
+  return rel;
+}
+
+/** The PDF behind one document of a stored run, wherever it lives. */
+export function loadDocumentPdf(runId: string, docId: string): Buffer | undefined {
+  const run = loadRun(runId);
+  const doc = run?.bundle.find((d) => d.id === docId);
+  if (!doc) return undefined;
+  const abs = path.join(process.cwd(), doc.sourcePath);
+  if (!abs.startsWith(process.cwd()) || !existsSync(abs)) return undefined;
+  void UPLOADS_DIR;
+  return readFileSync(abs);
 }
