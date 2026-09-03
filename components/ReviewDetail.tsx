@@ -181,6 +181,16 @@ export interface ReviewDetailProps {
    * Closing the panel gives it back — the trace is never nowhere.
    */
   panelOpen?: boolean;
+  /**
+   * Opens and closes the analysis panel.
+   *
+   * The panel has a key (E), and a key is not an affordance: nothing on screen
+   * would have told a reviewer using a mouse that the panel exists, which
+   * makes the whole reasoning beat invisible to anyone who does not read the
+   * hint strip. Absent ⇒ this screen cannot open a panel, and no control
+   * claiming otherwise is drawn.
+   */
+  onTogglePanel?: () => void;
 }
 
 /** The document and page currently on screen in the pane. */
@@ -207,6 +217,7 @@ export default function ReviewDetail({
   onShowAllClaimsChange,
   onPageContextChange,
   panelOpen = false,
+  onTogglePanel,
 }: ReviewDetailProps) {
   const verdict = VERDICT[finding.verdict];
 
@@ -228,9 +239,27 @@ export default function ReviewDetail({
             <span className="text-ink-3">{finding.materiality} materiality</span>
           </span>
 
-          <h1 className="mt-1.5 text-display font-semibold text-ink">
-            {finding.label}
-          </h1>
+          <div className="mt-1.5 flex items-start justify-between gap-4">
+            <h1 className="min-w-0 text-display font-semibold text-ink">
+              {finding.label}
+            </h1>
+
+            {/* The panel's visible half. Its label states what pressing it
+                does NOW, and `aria-expanded` says which state it is in — one
+                control, never a pair that could disagree. The key it also
+                carries is not named here: lib/data owns which key that is, and
+                the hint strip and the sheet are where it is written down. */}
+            {onTogglePanel ? (
+              <button
+                type="button"
+                aria-expanded={panelOpen}
+                onClick={onTogglePanel}
+                className="shrink-0 rounded border border-line bg-surface px-2.5 py-1 text-caption text-ink-2 hover:border-ink hover:bg-ink hover:text-surface focus-visible:shadow-selected focus-visible:outline-none"
+              >
+                {panelOpen ? "Hide reasoning" : "Show reasoning"}
+              </button>
+            ) : null}
+          </div>
 
           {finding.summary ? (
             <p className="mt-2 text-body text-ink-2">{finding.summary}</p>

@@ -59,6 +59,8 @@
 
 import FindingsQueue from "./FindingsQueue";
 import ReviewDetail, { type PageContext } from "./ReviewDetail";
+import SidePanel, { type SidePanelTab } from "./SidePanel";
+import { useChrome } from "./ChromeProvider";
 import ShortcutSheet from "./ShortcutSheet";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useShortcuts } from "@/hooks/useShortcuts";
@@ -188,6 +190,59 @@ export default function ReviewWorkspace({
         ? current
         : next,
     );
+  }, []);
+
+  /**
+   * The analysis panel: whether it is open, and which of its two tabs.
+   *
+   * Open state lives HERE rather than in the panel because three other things
+   * read it — the queue collapses when it opens, the detail column stands its
+   * inline query trace down, and a key toggles it.
+   */
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState<SidePanelTab>("reasoning");
+
+  /** The findings queue, collapsed to its rail. */
+  const [queueCollapsed, setQueueCollapsed] = useState(false);
+
+  /** The app nav's rail, which lives a layout above this screen. */
+  const { navCollapsed, setNavCollapsed } = useChrome();
+
+  /**
+   * Whether the PANEL is what collapsed the queue.
+   *
+   * Opening the panel puts a third column on a screen that had two, so the
+   * queue gives up its width. The prototype did this and never gave it back:
+   * close the panel and the queue stayed a rail, with nothing on screen
+   * explaining why. Here the panel restores what it took — and only what it
+   * took. A reviewer who collapsed the queue themselves and then opened the
+   * panel still has a collapsed queue afterwards, because that was their
+   * choice and the panel never touched it.
+   */
+  const queueTakenByPanel = useRef(false);
+
+  const setPanel = useCallback((open: boolean) => {
+    setPanelOpen(open);
+    if (open) {
+      setQueueCollapsed((collapsed) => {
+        queueTakenByPanel.current = !collapsed;
+        return true;
+      });
+      return;
+    }
+    if (queueTakenByPanel.current) {
+      queueTakenByPanel.current = false;
+      setQueueCollapsed(false);
+    }
+  }, []);
+
+  /**
+   * A reviewer moving the queue by hand takes it back from the panel: after
+   * this, closing the panel leaves the queue where they put it.
+   */
+  const handleQueueCollapsedChange = useCallback((collapsed: boolean) => {
+    queueTakenByPanel.current = false;
+    setQueueCollapsed(collapsed);
   }, []);
 
   // The queue opens on the state that hides nothing; the model says which.
@@ -519,6 +574,62 @@ export default function ReviewWorkspace({
 
   const hasQueue = visibleFindings.length > 0;
 
+  /**
+   * The panel needs a finding to explain and a page to serialise. `pageContext`
+   * is what the document pane reports once it has mounted a page, so it is
+   * absent only for a finding that records no source location at all — the one
+   * case where the pane returns early and there IS no page. The key is then
+   * unbound and falls through, rather than opening a panel whose Extraction
+   * tab would have nothing to name.
+   */
+  const panelReady = selected !== undefined && pageContext !== undefined;
+
+  /**
+   * Whether the panel is ACTUALLY on screen — the one value both the column
+   * and the detail beside it read.
+   *
+   * These were briefly two separate tests, and the gap between them was a bug:
+   * the detail column stands its inline query trace down while the panel holds
+   * it, so an "open" panel that could not render would have taken the trace
+   * off the screen and put nothing in its place.
+   */
+  const panelShown = panelOpen && panelReady;
+
+  const togglePanel = useCallback(() => {
+    setPanel(!panelOpen);
+  }, [panelOpen, setPanel]);
+
+  const showReasoning = useCallback(() => setPanelTab("reasoning"), []);
+  const showExtraction = useCallback(() => setPanelTab("extraction"), []);
+
+  const toggleNav = useCallback(() => {
+    setNavCollapsed(!navCollapsed);
+  }, [navCollapsed, setNavCollapsed]);
+
+  const toggleQueue = useCallback(() => {
+    handleQueueCollapsedChange(!queueCollapsed);
+  }, [queueCollapsed, handleQueueCollapsedChange]);
+
+  /**
+   * Focus mode is the two rails moving together — one key for "give me the
+   * document", instead of two.
+   *
+   * It COLLAPSES while either is still open and restores only when both are
+   * shut, so the first press always gains room. It deliberately leaves the
+   * hint strip alone: that strip is where E and S are advertised, and F is
+   * sheet-only, so taking it away would leave a reviewer in a state whose way
+   * out is not on screen.
+   */
+  const toggleFocusMode = useCallback(() => {
+    const expanded = !navCollapsed || !queueCollapsed;
+    setNavCollapsed(expanded);
+    handleQueueCollapsedChange(expanded);
+  }, [navCollapsed, queueCollapsed, setNavCollapsed, handleQueueCollapsedChange]);
+
+  const toggleAllClaims = useCallback(() => {
+    setShowAllClaims((shown) => !shown);
+  }, []);
+
   useShortcuts({
     // While the sheet is up, only the keys that dismiss it do anything.
     suspended: sheetOpen,
@@ -529,6 +640,21 @@ export default function ReviewWorkspace({
       approve: openFinding ? approveSelected : undefined,
       reject: openFinding ? rejectSelected : undefined,
       help: toggleSheet,
+      /*
+       * The view keys. Each is undefined exactly when this screen cannot carry
+       * it out, and an undefined handler is not intercepted at all — no
+       * preventDefault, no swallowed keystroke. `1` and `2` are bound only
+       * while the panel is open: they SWITCH a panel, which is what the sheet
+       * says they do, and a key that silently opened one would be doing
+       * something its own description does not claim.
+       */
+      toggleAnalysisPanel: panelReady ? togglePanel : undefined,
+      showReasoning: panelOpen ? showReasoning : undefined,
+      showExtraction: panelOpen ? showExtraction : undefined,
+      toggleNav,
+      toggleQueue: hasQueue ? toggleQueue : undefined,
+      toggleFocusMode: hasQueue ? toggleFocusMode : undefined,
+      toggleAllClaims: selected ? toggleAllClaims : undefined,
       /*
        * NO jumpToSource, and this is settled rather than pending. Jumping the
        * viewer to the selected finding's source page is a thing this build can
@@ -587,6 +713,8 @@ export default function ReviewWorkspace({
             onFilterChange={handleFilterChange}
             selectedId={selected?.id}
             onSelect={setSelectedId}
+            collapsed={queueCollapsed}
+            onCollapsedChange={handleQueueCollapsedChange}
           />
         </div>
 
@@ -621,6 +749,8 @@ export default function ReviewWorkspace({
               showAllClaims={showAllClaims}
               onShowAllClaimsChange={setShowAllClaims}
               onPageContextChange={handlePageContextChange}
+              panelOpen={panelShown}
+              onTogglePanel={panelReady ? togglePanel : undefined}
             />
           </div>
         ) : (
@@ -637,6 +767,29 @@ export default function ReviewWorkspace({
             </p>
           </div>
         )}
+
+        {/*
+         * The third column, and a real one: a flex sibling with a fixed width,
+         * so the document column — `flex-1 min-w-0` — gives up the space
+         * rather than having it drawn over the top. The prototype kept this
+         * panel mounted at zero width and clipped it, which leaves its content
+         * focusable and audible to a screen reader while invisible to
+         * everyone else; a closed panel here is not rendered at all.
+         *
+         * `panelReady` is the same gate the E key is bound on, so the key and
+         * the column can never disagree about whether there is a panel.
+         */}
+        {panelShown ? (
+          <SidePanel
+            finding={selected}
+            reviewId={reviewId}
+            documentId={pageContext.documentId}
+            page={pageContext.page}
+            tab={panelTab}
+            onTabChange={setPanelTab}
+            onClose={() => setPanel(false)}
+          />
+        ) : null}
       </div>
 
       {sheet}

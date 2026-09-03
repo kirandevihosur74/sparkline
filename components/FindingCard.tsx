@@ -85,7 +85,19 @@ interface FindingCardProps {
  * a total Record so a new ClaimVerdict fails the build instead of rendering an
  * unlabelled dot.
  */
-const VERDICT: Record<
+/**
+ * What each verdict is called and what colour says so.
+ *
+ * EXPORTED because the findings queue draws the same six verdicts twice: as
+ * cards here, and as the dots on its collapsed rail. Those two readings of one
+ * finding must agree — a rail whose amber dot sits beside a card labelled
+ * "Conflicting" is the column disagreeing with itself — and agreement by
+ * inspection is a test, not a guarantee.
+ *
+ * Four other modules still restate parts of this map (ClaimStrip documents its
+ * own copy). TODO(duplication: verdict tone) — they should import this one.
+ */
+export const VERDICT: Record<
   ClaimVerdict,
   { label: string; text: string; dot: string }
 > = {

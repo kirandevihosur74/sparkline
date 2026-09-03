@@ -38,7 +38,7 @@ import type { FindingReasoning, ReasoningFact } from "@/lib/data";
 
 /** Section labels, literal uppercase in the markup as the mockup has them. */
 const LABEL = {
-  why: "WHY THIS WAS FLAGGED",
+  why: "RULE APPLIED",
   routing: "HOW THIS CLAIM WAS ROUTED",
   steps: "HOW THIS VERDICT WAS REACHED",
   facts: "WHAT THE RECORD HOLDS",
@@ -49,7 +49,13 @@ const LABEL = {
 const CODE_PATH_CUE =
   "Rule read off the code path — no rule id is stored on a finding.";
 
-const NO_PROSE = "This finding records no summary and no note.";
+/*
+ * Said where a verdict has no rule behind it — corroborated, consistent and
+ * unverified findings, which no rule in the workspace policy produced. Naming
+ * one anyway would be the panel inventing the provenance it exists to report.
+ */
+const NO_RULE =
+  "No workspace rule produced this verdict — nothing in the policy routed it, and no rule id is recorded against it.";
 
 export interface ReasoningTabProps {
   /** Derived by getFindingReasoning(). This component does not derive. */
@@ -84,15 +90,27 @@ export default function ReasoningTab({
           ) : undefined
         }
       >
-        {ruleProvenance === "code-path" ? (
-          <p className="mb-2 text-micro text-ink-3">{CODE_PATH_CUE}</p>
-        ) : null}
-        {reasoning.why ? (
-          <p className="text-body text-ink-2">{reasoning.why}</p>
+        {/*
+         * The finding's own summary is NOT repeated here.
+         *
+         * `reasoning.why` is `finding.summary` verbatim, and the detail column
+         * renders that paragraph in its header — two inches to the left of
+         * this panel and visible at the same time. Printing it twice cost
+         * eight lines of a 384px column to tell the reviewer something they
+         * were already reading. What this panel is for is the part the screen
+         * does NOT say: which rule ran, how the claim was routed, what the
+         * record actually holds, and where the record stops. So the section
+         * keeps the rule and drops the prose.
+         */}
+        {rule ? (
+          <p className="text-body text-ink-2">{rule.name}</p>
         ) : (
           /* The system says what it does not know. */
-          <p className="text-caption text-ink-3">{NO_PROSE}</p>
+          <p className="text-caption text-ink-3">{NO_RULE}</p>
         )}
+        {ruleProvenance === "code-path" ? (
+          <p className="mt-1.5 text-micro text-ink-3">{CODE_PATH_CUE}</p>
+        ) : null}
       </Section>
 
       {routing ? (

@@ -4095,13 +4095,20 @@ const SHORTCUT_SPECS: readonly ShortcutSpec[] = [
   },
   {
     /*
-     * Focus mode is the two rails collapsed together, and the description says
-     * what it COSTS as well as what it buys: the hint strip is one of the
-     * things it hides, so a reviewer who turns it on has to have been told
-     * where the keys went. This row is where they are told.
+     * Focus mode is the two rails and the hint strip collapsed together, and
+     * the description names the hint strip rather than only the rails: the
+     * strip is where the other keys are advertised, so a reviewer who turns
+     * focus mode on has to have been told, before pressing it, that they are
+     * turning off the thing that was telling them. This row is where they are
+     * told, and "or restore" is what says the same key brings it all back.
      */
     key: "F",
-    description: "Collapse both rails and the hints for the widest document",
+    /* Both rails, and ONLY the rails. An earlier draft of this line also
+       promised the hint strip, and the strip is the one piece of chrome focus
+       mode must not take: it is where E and S are advertised, and F is
+       sheet-only, so hiding it would leave a reviewer in a state whose way out
+       is not on screen. */
+    description: "Collapse or restore both rails",
     group: "global",
     hint: false,
   },
@@ -4112,9 +4119,15 @@ const SHORTCUT_SPECS: readonly ShortcutSpec[] = [
      * those two labels so the key and the button read as one control.
      */
     key: "S",
+    /* Sheet-only, unlike E. The strip flex-wraps rather than overflowing, so
+       every chip it cannot fit costs the document a row — measured at three
+       rows with both E and S listed, against two before this phase. E buys
+       that row: it opens a panel nothing else on screen announces. S does not:
+       it is a shortcut for a labelled button already sitting above the page,
+       so the reviewer can find the function without the chip. */
     description: "Show all claim boxes, or findings only",
     group: "global",
-    hint: true,
+    hint: false,
   },
   {
     key: "?",

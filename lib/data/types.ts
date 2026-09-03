@@ -1227,9 +1227,17 @@ export interface ComplianceCopy {
  * Which part of the app a binding belongs to — the sheet's section order.
  *
  * `selection` moves through the queue, `review` decides the finding in front
- * of you, `global` works wherever the app is. GLOBAL holds ONE entry and that
- * is the honest size of it: see SHORTCUTS in fixtures.ts for why the theme
- * toggle and the nav did not earn keys.
+ * of you, `global` is everything else the screen can do.
+ *
+ * Global used to hold one entry, and this comment used to say so. The view
+ * keys — the analysis panel, its two tabs, the two rails, focus mode, show-all
+ * — landed there, and they landed there for a mechanical reason rather than a
+ * tidy one: DecisionBar matches its Approve and Reject chips by scanning the
+ * `review` group for a description starting with the button's verb, and it
+ * drops that whole group from the hint strip once a finding is signed. A view
+ * key still works on a signed finding. Under `review` it would have been
+ * un-advertised while remaining live. See SHORTCUTS in fixtures.ts, which also
+ * records what still has no key and why.
  */
 export type ShortcutGroupId = "selection" | "review" | "global";
 
