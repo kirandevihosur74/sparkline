@@ -30,6 +30,8 @@ export type {
   Finding,
   ReviewSummary,
   AuditRecord,
+  SigningStep,
+  SigningTimings,
   RejectReason,
   // Pipeline view-models (fixture-only — TODO(schema-gap: pipeline))
   StageId,

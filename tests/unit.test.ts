@@ -240,6 +240,59 @@ test("applyLedger overlays decisions onto findings and flags without mutating", 
   assert.equal(applyLedger(run, []), run, "empty ledger returns the same run");
 });
 
+test("applyLedger keeps a countersignature and its decision apart", () => {
+  /*
+   * A flag carries TWO records: the decision, and the countersignature that
+   * endorses it. The merge was keyed on flagId alone, so the two collided and
+   * one was dropped — silently, and only once a ledger existed, because
+   * applyLedger returns early on an empty one. A single unrelated live
+   * signature turned the demo run's four audit records into three.
+   */
+  const decision: AuditRecord = {
+    flagId: "flag-x",
+    reviewer: "M. Bui",
+    decision: "approved",
+    signedAt: "2026-09-01T00:00:00.000Z",
+    contentHash: "sha256:aaa",
+    claimField: "f",
+    claimValue: "v",
+    evidenceSummary: "e",
+  };
+  const countersignature: AuditRecord = {
+    ...decision,
+    reviewer: "P. Ramanathan",
+    signedAt: "2026-09-01T01:00:00.000Z",
+    contentHash: "sha256:bbb",
+    countersigns: {
+      decidedByActorId: "actor-bui",
+      decidedAt: decision.signedAt,
+      label: "Countersigned",
+    },
+  };
+  const run = { ...adaptRun(storedRun()), auditRecords: [decision, countersignature] };
+
+  const unrelated: AuditRecord = { ...decision, flagId: "flag-y", contentHash: "sha256:ccc" };
+  const both = applyLedger(run, [unrelated]);
+  assert.equal(both.auditRecords.length, 3, "the endorsement survives an unrelated signature");
+
+  /* A real signature still REPLACES the fixture decision for its own flag —
+     that is what this merge is for — and still leaves the endorsement alone.
+     The sign route never sets `countersigns`, so a live row is always a
+     decision. */
+  const real: AuditRecord = { ...decision, contentHash: "sha256:real", reviewer: "K. Shah" };
+  const replaced = applyLedger(run, [real]);
+  assert.equal(replaced.auditRecords.length, 2);
+  assert.equal(
+    replaced.auditRecords.find((r) => !r.countersigns)?.reviewer,
+    "K. Shah",
+    "the live decision replaced the fixture one",
+  );
+  assert.ok(
+    replaced.auditRecords.some((r) => r.countersigns),
+    "the countersignature is still there",
+  );
+});
+
 test("orderFindings and deltaLabel are stable helpers", () => {
   const run = adaptRun(storedRun());
   assert.deepEqual(orderFindings([...run.findings].reverse()), run.findings);
